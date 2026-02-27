@@ -1,0 +1,275 @@
+id: morning-brief
+name: Morning Brief
+description: Daily morning standup for Pavol — completed, in progress, blocked, system health, real metrics.
+schedule: "0 7 * * *"
+
+steps:
+  - id: gather
+    agent: bash
+    input: |
+      source ~/.pif-env
+
+      # Fetch service role key for Supabase queries (bypasses RLS)
+      SRK=$(pif-creds get "Supabase" --json 2>/dev/null | python3 -c "
+      import sys,json
+      n=json.load(sys.stdin).get('notes','')
+      for l in n.splitlines():
+        if l.startswith('Service role key:'):
+          print(l.split(': ',1)[1])
+          break
+      " 2>/dev/null)
+      if [ -z "$SRK" ]; then
+        SRK="${PIF_SUPABASE_ANON_KEY}"
+        echo "WARN: Could not fetch service role key, falling back to anon key"
+      fi
+      SB="${PIF_SUPABASE_URL}/rest/v1"
+
+      # Helper: curl with auth
+      sb_get() {
+        curl -s "${SB}/${1}" -H "apikey: ${SRK}" -H "Authorization: Bearer ${SRK}" 2>/dev/null
+      }
+
+      echo "=== YESTERDAY'S NOTE ==="
+      YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
+      cat ~/memory/daily/${YESTERDAY}.md 2>/dev/null || echo "No note for yesterday"
+
+      echo ""
+      echo "=== TODAY'S NOTE ==="
+      cat ~/memory/daily/$(date +%Y-%m-%d).md 2>/dev/null || echo "No daily note yet"
+
+      echo ""
+      echo "=== WORKING STATE ==="
+      cat ~/memory/WORKING.md
+
+      echo ""
+      echo "=== INBOX ==="
+      ls ~/workspace/inbox/ 2>/dev/null | head -20 || echo "Inbox empty"
+
+      echo ""
+      echo "=== GIT ACTIVITY (last 24h) ==="
+      for dir in ~/projects/*/; do
+        PROJ=$(basename "$dir")
+        if [ -d "$dir/.git" ]; then
+          COMMITS=$(git -C "$dir" log --oneline --since="24 hours ago" --all 2>/dev/null)
+          if [ -n "$COMMITS" ]; then
+            echo "[$PROJ]"
+            echo "$COMMITS" | head -10
+            BRANCH=$(git -C "$dir" branch --show-current 2>/dev/null)
+            echo "  (on branch: $BRANCH)"
+            echo ""
+          fi
+        fi
+      done
+
+      echo ""
+      echo "=== RECENT SESSION ACTIVITY ==="
+      LATEST_SESSION=$(ls -t ~/.claude/projects/-root/*.jsonl 2>/dev/null | head -1)
+      if [ -n "$LATEST_SESSION" ]; then
+        LAST_MOD=$(stat -c %Y "$LATEST_SESSION" 2>/dev/null)
+        CUTOFF=$(date -d "24 hours ago" +%s)
+        if [ "$LAST_MOD" -gt "$CUTOFF" ] 2>/dev/null; then
+          echo "Active session found (modified $(date -d @$LAST_MOD '+%H:%M'))"
+          grep -o '"tool":"[^"]*"' "$LATEST_SESSION" 2>/dev/null | sort | uniq -c | sort -rn | head -10
+        fi
+      fi
+
+      echo ""
+      echo "=== SKILLS CHANGES (last 24h) ==="
+      find ~/.claude/skills/ -name "*.md" -mtime -1 2>/dev/null | while read f; do
+        echo "  $(basename $(dirname $f))/$(basename $f)"
+      done || echo "No skill changes"
+
+      echo ""
+      echo "=== DEPLOYMENTS ==="
+      MC_DIST=~/projects/mission-control/dist/index.html
+      if [ -f "$MC_DIST" ]; then
+        MC_MOD=$(stat -c %Y "$MC_DIST" 2>/dev/null)
+        MC_CUTOFF=$(date -d "24 hours ago" +%s)
+        if [ "$MC_MOD" -gt "$MC_CUTOFF" ] 2>/dev/null; then
+          echo "Mission Control: rebuilt $(date -d @$MC_MOD '+%Y-%m-%d %H:%M')"
+          MC_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090/ 2>/dev/null)
+          echo "  HTTP status: $MC_STATUS"
+        else
+          echo "Mission Control: no recent deploy"
+        fi
+      fi
+
+      echo ""
+      echo "=== TASK BOARD METRICS ==="
+      TASKS_RAW=$(sb_get "tasks?select=status,created_at,updated_at")
+      if [ -n "$TASKS_RAW" ] && [ "$TASKS_RAW" != "[]" ]; then
+        echo "$TASKS_RAW" | python3 -c "
+      import sys, json
+      from datetime import datetime, timedelta, timezone
+      tasks = json.loads(sys.stdin.read())
+      counts = {}
+      for t in tasks:
+          s = t.get('status','unknown')
+          counts[s] = counts.get(s, 0) + 1
+      print('Status breakdown:')
+      for s in ['todo','in_progress','review','backlog','done']:
+          if s in counts:
+              print(f'  {s}: {counts[s]}')
+      total = len(tasks)
+      done = counts.get('done', 0)
+      active = total - done
+      print(f'Active: {active} | Total: {total}')
+      week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+      done_this_week = 0
+      created_this_week = 0
+      for t in tasks:
+          try:
+              if t.get('status') == 'done' and t.get('updated_at'):
+                  if datetime.fromisoformat(t['updated_at']) > week_ago:
+                      done_this_week += 1
+          except: pass
+          try:
+              if t.get('created_at'):
+                  if datetime.fromisoformat(t['created_at']) > week_ago:
+                      created_this_week += 1
+          except: pass
+      print(f'7-day velocity: {done_this_week} closed / {created_this_week} opened')
+      " 2>/dev/null || echo "Could not compute task metrics"
+      else
+        echo "No task data available"
+      fi
+
+      echo ""
+      echo "=== OPEN TASKS ==="
+      sb_get "tasks?status=not.in.(done,archived)&select=title,status,priority&order=priority.asc,created_at.asc" || echo "Could not fetch tasks"
+
+      echo ""
+      echo "=== WORKFLOW METRICS (7 days) ==="
+      WEEK_AGO=$(date -u -d "7 days ago" +%Y-%m-%dT%H:%M:%SZ)
+      RUNS_RAW=$(sb_get "runs?select=workflow_id,status,started_at,completed_at&started_at=gte.${WEEK_AGO}&order=started_at.desc")
+      if [ -n "$RUNS_RAW" ] && [ "$RUNS_RAW" != "[]" ]; then
+        echo "$RUNS_RAW" | python3 -c "
+      import sys, json
+      from datetime import datetime
+      runs = json.loads(sys.stdin.read())
+      total = len(runs)
+      by_wf = {}
+      for r in runs:
+          wf = r.get('workflow_id','unknown')
+          if wf not in by_wf:
+              by_wf[wf] = {'total': 0, 'completed': 0, 'failed': 0, 'durations': []}
+          by_wf[wf]['total'] += 1
+          if r.get('status') == 'completed':
+              by_wf[wf]['completed'] += 1
+              if r.get('started_at') and r.get('completed_at'):
+                  try:
+                      s = datetime.fromisoformat(r['started_at'])
+                      e = datetime.fromisoformat(r['completed_at'])
+                      by_wf[wf]['durations'].append((e - s).total_seconds())
+                  except: pass
+          elif r.get('status') == 'failed':
+              by_wf[wf]['failed'] += 1
+      completed = sum(v['completed'] for v in by_wf.values())
+      failed = sum(v['failed'] for v in by_wf.values())
+      rate = (completed / total * 100) if total else 0
+      print(f'Overall: {total} runs, {completed} completed, {failed} failed ({rate:.0f}% success)')
+      for wf, stats in sorted(by_wf.items()):
+          avg_dur = ''
+          if stats['durations']:
+              avg_s = sum(stats['durations']) / len(stats['durations'])
+              avg_dur = f', avg {avg_s:.0f}s'
+          print(f'  {wf}: {stats[\"completed\"]}/{stats[\"total\"]} ok, {stats[\"failed\"]} failed{avg_dur}')
+      " 2>/dev/null || echo "Could not compute workflow metrics"
+      else
+        echo "No workflow runs in last 7 days"
+      fi
+
+      echo ""
+      echo "=== RECENT RUNS ==="
+      sb_get "runs?select=workflow_id,status,started_at&order=started_at.desc&limit=5" || echo "Could not fetch runs"
+
+      echo ""
+      echo "=== SYSTEM HEALTH ==="
+      sb_get "heartbeats?select=bot_status,disk_free,ram_free,uptime,created_at&order=created_at.desc&limit=1" || echo "Could not fetch heartbeat"
+
+      echo ""
+      echo "=== RECENT EVENTS (24h) ==="
+      DAY_AGO=$(date -u -d "24 hours ago" +%Y-%m-%dT%H:%M:%SZ)
+      EVENTS=$(sb_get "events?select=type,source,created_at&created_at=gte.${DAY_AGO}&order=created_at.desc&limit=15")
+      if [ -n "$EVENTS" ] && [ "$EVENTS" != "[]" ]; then
+        echo "$EVENTS" | python3 -c "
+      import sys, json
+      events = json.loads(sys.stdin.read())
+      counts = {}
+      for e in events:
+          t = e.get('type','unknown')
+          counts[t] = counts.get(t, 0) + 1
+      for t, c in sorted(counts.items(), key=lambda x: -x[1]):
+          print(f'  {t}: {c}')
+      " 2>/dev/null || echo "$EVENTS"
+      else
+        echo "No events in last 24h"
+      fi
+
+      echo ""
+      echo "=== FAILED STEPS ==="
+      sb_get "steps?status=eq.failed&select=id,step_id,run_id,agent,started_at&order=started_at.desc&limit=5" || echo "No failed steps"
+    expects: "exit 0"
+
+  - id: summarize
+    agent: claude
+    model: haiku
+    agent_name: pif
+    input: |
+      You are Pif, Pavol's chief of staff. Create a morning standup brief from this data.
+
+      Use this format (skip empty sections):
+
+      *Overnight Activity*
+      - [summarize git commits, deploys, skill installs, session work from last 24h — this is the FRESHEST data, prioritize it]
+
+      *Task Board*
+      - [active task count, items in review, 7-day velocity (closed/opened)]
+      - [list any todo or in_progress tasks by title]
+
+      *Workflow Health*
+      - [7-day success rate, per-workflow breakdown with avg duration]
+      - [any recent failures — name the workflow and when]
+
+      *In Progress*
+      - [items from WORKING.md Active section, updated with overnight findings]
+
+      *Blocked*
+      - [items with what is needed to unblock]
+
+      *Needs Review*
+      - [anything awaiting Pavol's decision — include newly deployed features and tasks in review status]
+
+      *System*
+      - Bot: [status] | Disk: [free] | RAM: [free] | Uptime: [uptime]
+      - Events (24h): [summary of event types and counts]
+
+      Rules:
+      - 1-3 bullets per section max
+      - Skip sections with no items
+      - Total under 30 lines
+      - Use Telegram Markdown (*bold* for headers)
+      - Overnight Activity is the most important section — lead with what actually happened, not stale WORKING.md prose
+      - Task Board and Workflow Health use REAL numbers from Supabase — never say "could not fetch"
+      - If git shows merged branches, mention them by name
+      - If skills were installed, name them
+
+      Data:
+      {{gather_output}}
+
+      First line of your reply MUST be: STATUS: done
+      Then the formatted brief on subsequent lines.
+    expects: "STATUS: done"
+
+  - id: deliver
+    agent: bash
+    input: |
+      cat > /tmp/pif-morning-msg.txt << 'MSGEOF'
+      {{summarize_output}}
+      MSGEOF
+      BRIEF=$(sed '1{/^STATUS:/d}' /tmp/pif-morning-msg.txt | sed '/^$/d')
+      ~/scripts/telegram-send.sh "Good morning! Here's your standup:
+
+      ${BRIEF}"
+      rm -f /tmp/pif-morning-msg.txt
+    expects: "exit 0"
