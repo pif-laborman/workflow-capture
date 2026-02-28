@@ -59,9 +59,9 @@ ROLE_CONFIG = {
     "coding":       {"cmd": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus"],
                      "user": "ralph", "timeout": 1800},
     "verification": {"cmd": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus"],
-                     "user": "ralph", "timeout": 900},
+                     "user": "ralph", "timeout": 1500},
     "testing":      {"cmd": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus"],
-                     "user": "ralph", "timeout": 900},
+                     "user": "ralph", "timeout": 1500},
 }
 
 # --- Logging ---
