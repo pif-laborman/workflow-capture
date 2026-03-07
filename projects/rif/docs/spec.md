@@ -1,6 +1,6 @@
 # Rif — Specification Document
 
-**Project**: Deploy-your-own AI chief of staff
+**Project**: Managed AI chief of staff platform
 **Codename**: Rif (also the name of the first deployed assistant — for Pavol's girlfriend)
 **Author**: Pif
 **Date**: 2026-02-28
@@ -10,17 +10,19 @@
 
 ## 1. Vision
 
-Rif is a deploy-your-own AI chief of staff. Polsia, but you own it.
+Rif is a managed AI chief of staff. Polsia, but fair.
 
-Users define their goals. Rif works on them every night — planning, executing, reporting. They wake up to progress. Unlike Polsia ($49/mo + 20% revenue share, hosted on their infra), Rif runs on the user's own server, their own database, their own Claude subscription. No revenue share. No vendor lock-in. Full data ownership.
+Users define their goals. Their assistant works on them every day — planning, executing, reporting. They wake up to progress. Unlike Polsia ($49/mo + 20% revenue share), Rif charges a flat fee and takes half the cut: 10% on platform-facilitated revenue. The infrastructure is managed for you — updates, monitoring, backups, all handled. You bring your Claude subscription and a Telegram bot. We handle everything else.
 
 The first user is Pavol's girlfriend. The system reuses Pif's battle-tested scripts, Mission Control dashboard, memory architecture, and workflow engine — all centrally managed at `/opt/assistant-platform/`, with per-user data isolated via Linux users and Supabase tenant IDs.
 
 **Core principle**: One platform, many instances. Code lives in the platform (root-owned, read-only). User data lives in `~/` per Linux user. All instances share a single Supabase project with RLS-enforced tenant isolation.
 
-**Positioning**: "Your AI co-founder you actually own. Tell it your goals. It works while you sleep. Wake up to progress." Same category as Polsia — but self-hosted, human-in-the-loop, zero revenue share.
+**Positioning**: "Your AI chief of staff, maintained for you. $49/mo. 10% on what it earns you. Half of Polsia's rate. Your data is isolated and exportable." Same category as Polsia — but human-in-the-loop, fairly priced, fully maintained.
 
 **The daily cycle is the product.** Not the feature list, not the tech stack. The core value prop is: every day, your assistant plans work aligned to your goals, executes approved tasks, and reports results. This is what we sell, what we demo, and what the landing page leads with.
+
+**The Gumroad model.** Rif is to AI assistants what Gumroad is to digital products. The platform handles infrastructure, updates, and operations. You focus on your goals. When the assistant generates revenue through platform-provided tools (sub-apps, automated services), we take a fair cut. If it doesn't generate revenue, you just pay the flat fee.
 
 ---
 
@@ -536,32 +538,45 @@ Ship with Rif Phase 2:
 
 ## 16. Pricing Strategy
 
-Directly competitive with Polsia, but without the revenue share trap.
+Gumroad model: managed platform with a fair revenue share. Directly competitive with Polsia at half the rate.
 
-### 16.1 Tiers
+### 16.1 MVP Tier
 
-| Tier | Price | What You Get | Target |
-|------|-------|-------------|--------|
-| **Starter** | Free | Templates, setup script, docs. You bring your own Claude sub + VPS. Community support via GitHub. | Developers, tinkerers, privacy maximalists |
-| **Managed** | $49/mo | Pif deploys and maintains your assistant on shared infrastructure. Includes monitoring, updates, backup, Telegram + email support. | Non-technical users, Polsia migrants |
-| **Dedicated** | $99/mo | Your own VPS, your own everything. Pif deploys, you own. Monthly health check, priority support. | Founders, power users |
-| **Enterprise** | Custom | Multiple assistants, team deployment, custom integrations, SLA. | Companies |
+One tier for now. Expand later as the platform grows.
 
-### 16.2 What the User Always Pays Separately
+| Tier | Base Fee | Rev Share | What You Get |
+|------|----------|-----------|-------------|
+| **Managed** | $49/mo | 10% (Phase 2) | Full AI assistant on managed infrastructure. Monitoring, updates, backups, Telegram + email support. |
 
-- Claude subscription: $20/mo (Pro) or $100/mo (Max)
-- Supabase: Free tier for most, $25/mo Pro if needed
-- VPS (Starter/Dedicated): $5-15/mo (Hostinger/Hetzner)
+Revenue share kicks in when platform-facilitated revenue channels exist (sub-apps, Stripe Connect integration — Phase 2+). Until then, it's just the flat fee.
 
-### 16.3 The Anti-Polsia Pitch
+### 16.2 Future Tiers (Not Built Yet)
 
-**No revenue share. Ever.** This is the single strongest differentiator.
+| Tier | Base Fee | Rev Share | When |
+|------|----------|-----------|------|
+| **Pro** | $99/mo | 5% | Phase 3 — dedicated resources, priority support, custom skills |
+| **Self-hosted** | Free | 0% | Future — requires packaging the platform as a distributable. Different product. |
 
-Polsia charges $49/mo + 20% of everything you earn. At $10K/mo revenue, that's $2,049/mo. At $100K/mo, it's $20,049/mo — more expensive than a human chief of staff.
+### 16.3 What the User Pays Separately
 
-Rif: $49/mo flat. Period. Your revenue is yours.
+- Claude Code subscription: $20/mo (Pro) or $100/mo (Max)
 
-Marketing angle: "Paying Polsia 20% of your revenue? Switch to Rif. $49/mo flat. Own everything."
+That's it. No Supabase costs (shared project, D4). No VPS costs (shared infrastructure). No domain costs (hosted on meetpif.com).
+
+### 16.4 The Anti-Polsia Pitch
+
+**Half the rate, fully managed.**
+
+| | Polsia | Rif |
+|---|--------|-----|
+| Base fee | $49/mo | $49/mo |
+| Revenue share | 20% | 10% |
+| At $10K/mo revenue | $2,049/mo | $1,049/mo |
+| At $100K/mo revenue | $20,049/mo | $10,049/mo |
+| Human-in-the-loop | No | Yes |
+| Data exportable | No | Yes |
+
+Marketing angle: "Polsia takes 20%. We take 10%. Same AI chief of staff, half the cost, human oversight included."
 
 ---
 
@@ -569,9 +584,9 @@ Marketing angle: "Paying Polsia 20% of your revenue? Switch to Rif. $49/mo flat.
 
 ### 17.1 Product Hunt Launch (Phase 2)
 
-Plan a Product Hunt launch for Rif v1. The self-hosted angle is catnip for the indie hacker / privacy crowd.
+Plan a Product Hunt launch for Rif v1. The "Gumroad for AI assistants" angle resonates with indie hackers and solo founders.
 
-**Launch narrative**: "We built an AI chief of staff that's been running 24/7 since early 2026. Now you can deploy your own. $49/mo. No revenue share. You own everything."
+**Launch narrative**: "We built an AI chief of staff that's been running 24/7 since early 2026. Now you can have one too. $49/mo + 10% on what it earns you. Half of Polsia's rate. Fully managed. Human-in-the-loop."
 
 **Timing**: After 3+ successful deployments (Pavol's girlfriend + 2 beta testers). Need real testimonials, not just Pif's own dogfooding.
 
@@ -584,14 +599,14 @@ Plan a Product Hunt launch for Rif v1. The self-hosted angle is catnip for the i
 ### 17.3 Polsia Migration Landing Page
 
 Dedicated page at `rif.app/from-polsia` (or `meetpif.com/migrate`):
-- Side-by-side Polsia vs Rif comparison
-- Revenue share calculator: "Enter your monthly revenue. Here's what you'd save."
+- Side-by-side Polsia vs Rif comparison (20% vs 10%)
+- Revenue share calculator: "Enter your monthly revenue. Here's what you'd save switching from Polsia."
 - One-click migration guide
-- Target users who hit the revenue share ceiling
+- Target users who hit the 20% ceiling
 
 ### 17.4 Content Marketing
 
-- Blog posts on meetpif.com: "Why We Built Rif" / "The Case Against Revenue Share" / "What Polsia Gets Right (And Wrong)"
+- Blog posts on meetpif.com: "Why We Built Rif" / "Why 10% Instead of 20%" / "What Polsia Gets Right (And Wrong)"
 - These double as SEO for "autonomous AI assistant," "AI chief of staff," "Polsia alternative"
 
 ---
