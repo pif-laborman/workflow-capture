@@ -786,9 +786,34 @@ The onboarding doesn't end when the user hits the dashboard. A setup email seque
 - **Stoppable.** Unsubscribe link, obviously. But also: "Reply 'stop' and I'll only message you on Telegram."
 
 ### Technical Notes
-- Emails sent via Pif's Gmail (SMTP, app password already configured) or a transactional service (Resend, Postmark) for deliverability
+- **Email infra: Resend.** Free tier = 3,000 emails/month (100/day). More than enough for alpha (<100 users × 5 onboarding emails = 500 total). Pro tier = $20/mo for 50K emails when we scale. Send from `pif@meetpif.com` with verified domain.
 - Sequence state tracked in Supabase (which emails sent, which opened, which acted on)
 - Adaptive logic: check user activity (tasks created, messages sent, features used) before sending each email to customize content
+
+### Email Infrastructure — Resend + meetpif.com
+
+**Key concept:** Resend is a *sending* service, not a mailbox provider. There is no `pif@meetpif.com` inbox. Resend verifies that we own the domain, then lets us send from any address `@meetpif.com` (e.g. `pif@meetpif.com`, `noreply@meetpif.com`). No email account creation needed.
+
+**Domain verification — DNS records on Cloudflare:**
+
+Currently, meetpif.com has **zero email DNS records** — no MX, no SPF, no DKIM, no DMARC. We need to add the following (Resend provides exact values during domain setup):
+
+| Record | Type | Purpose |
+|---|---|---|
+| SPF | TXT | Authorizes Resend's servers to send on behalf of meetpif.com |
+| DKIM | CNAME (×3) | Cryptographic signature proving emails are authentic |
+| DMARC | TXT | Policy telling receivers what to do with unauthenticated mail |
+
+**Setup steps:**
+1. Sign up for Resend (resend.com)
+2. Add `meetpif.com` as a sending domain
+3. Resend provides DNS records → add them to Cloudflare DNS
+4. Resend verifies propagation (usually <5 minutes on Cloudflare)
+5. Send from `pif@meetpif.com` — no mailbox required
+
+**Receiving replies:** Resend supports inbound webhooks — when someone replies to `pif@meetpif.com`, the reply is POSTed to our API endpoint as a webhook. This is how we handle Email 5 ("reply with feedback") and the research-by-email feature in Option D. No separate email provider needed.
+
+**Reply-to strategy:** Onboarding emails use `reply-to: pif@meetpif.com`. Resend's inbound webhook catches replies and routes them to the tenant's Claude session (same routing as Telegram — identify user by email, look up tenant, dispatch). For MVP/alpha, replies can go to a shared inbox or just be logged.
 
 ---
 
@@ -825,4 +850,4 @@ The onboarding doesn't end when the user hits the dashboard. A setup email seque
    - **Managed keys:** Rif pays for Claude API, bundles into pricing. Zero onboarding friction — the user never sees an API key. Higher margins, simpler UX, but Rif carries usage risk.
    - **Deferred:** Instance runs on Pif's key during onboarding + first N days. User is prompted to add their own key later, once they're hooked. "Free trial then convert" model. Best of both worlds for onboarding UX, but requires a migration flow post-onboarding.
    - **Recommendation:** TBD — this is a business model decision that affects pricing, margins, and onboarding friction. Needs Pavol's call.
-5. **Email sending infrastructure:** Pif's Gmail SMTP works for alpha (<100 users), but deliverability will suffer at scale (SPF/DKIM alignment, sending reputation). At what point do we switch to a transactional email service (Resend, Postmark)?
+5. ~~**Email sending infrastructure**~~ **Resolved: Resend.** Free tier covers alpha (3K emails/mo). Pro at $20/mo when we scale. Domain verification on meetpif.com via Cloudflare DNS (SPF, DKIM, DMARC — currently none exist). No mailbox needed — Resend is send-only; inbound webhooks handle replies.
