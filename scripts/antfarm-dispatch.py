@@ -37,6 +37,10 @@ LOGS_DIR = Path.home() / "logs"
 SCRIPTS_DIR = Path.home() / "scripts"
 TELEGRAM_SEND = SCRIPTS_DIR / "telegram-send.sh"
 
+ACTIVE_FLAG = Path("/tmp/antfarm-active")
+IDLE_SCAN_FILE = Path("/tmp/antfarm-last-scan")
+IDLE_SCAN_INTERVAL = 300  # 5 min fallback scan when flag absent
+
 SUPABASE_URL = os.environ.get("PIF_SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("PIF_SUPABASE_SERVICE_ROLE_KEY", "")
 if not SUPABASE_KEY:
@@ -46,6 +50,10 @@ if not SUPABASE_KEY:
         SUPABASE_KEY = _result.stdout.strip()
     except Exception:
         SUPABASE_KEY = os.environ.get("PIF_SUPABASE_ANON_KEY", "")
+
+# Export so antfarm CLI subprocesses inherit the resolved key
+os.environ["PIF_SUPABASE_SERVICE_ROLE_KEY"] = SUPABASE_KEY
+os.environ["PIF_SUPABASE_URL"] = SUPABASE_URL
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -73,9 +81,11 @@ _fmt = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 _fh = logging.FileHandler(LOGS_DIR / "antfarm-dispatch.log")
 _fh.setFormatter(_fmt)
 log.addHandler(_fh)
-_sh = logging.StreamHandler()
-_sh.setFormatter(_fmt)
-log.addHandler(_sh)
+# Only add StreamHandler when running interactively (not via cron redirect)
+if sys.stderr.isatty():
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(_fmt)
+    log.addHandler(_sh)
 
 
 # --- Supabase helpers ---
@@ -441,8 +451,38 @@ def handle_retry_step(run: dict, current_step_id: str, step_config: dict,
             f"RETRY EXHAUSTED step={current_step_name} "
             f"retries={retry_count}/{max_retries}"
         )
-        sb_update("antfarm_runs", {"id": run_id}, {"context": context})
-        antfarm_fail(current_step_id, f"Retries exhausted ({retry_count}/{max_retries})")
+        error_msg = f"Retries exhausted ({retry_count}/{max_retries})"
+
+        # Directly mark step + run as failed (bypass CLI failStep which
+        # has its own retry counter that conflicts with ours).
+        sb_update("antfarm_steps", {"id": current_step_id}, {
+            "status": "failed",
+            "output": error_msg,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+        # Also fail the retry target step if it's pending/waiting,
+        # otherwise it gets re-dispatched and re-triggers this step.
+        if retry_target:
+            target_steps = sb_select("antfarm_steps", {
+                "run_id": f"eq.{run_id}",
+                "step_id": f"eq.{retry_target}",
+                "select": "id,status",
+            })
+            for ts in target_steps:
+                if ts["status"] in ("pending", "waiting"):
+                    sb_update("antfarm_steps", {"id": ts["id"]}, {
+                        "status": "failed",
+                        "output": f"Blocked: {current_step_name} {error_msg}",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+
+        sb_update("antfarm_runs", {"id": run_id}, {
+            "status": "failed",
+            "context": context,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        log.info(f"RUN FAILED run={run_id[:8]} — {error_msg}")
         return True
 
     log.info(
@@ -525,6 +565,33 @@ def notify(message: str):
         log.error(f"Notify failed: {e}")
 
 
+def check_milestone(run_id: str, run_task: str):
+    """Send a Telegram milestone notification at 25%/50%/75% completion."""
+    try:
+        steps = sb_select("antfarm_steps", {
+            "run_id": f"eq.{run_id}",
+            "select": "status",
+        })
+        if not steps:
+            return
+        total = len(steps)
+        done = sum(1 for s in steps if s["status"] in ("completed", "skipped"))
+        pct = int(done / total * 100) if total else 0
+
+        # Check thresholds — use a flag file to avoid duplicate notifications
+        flag_dir = Path(f"/tmp/antfarm-milestones-{run_id[:8]}")
+        flag_dir.mkdir(exist_ok=True)
+
+        for threshold in (25, 50, 75):
+            flag = flag_dir / f"{threshold}"
+            if pct >= threshold and not flag.exists():
+                flag.touch()
+                notify(f"Antfarm milestone: {run_task}\n{done}/{total} steps done ({pct}%)")
+                break  # Only send one notification per step completion
+    except Exception as e:
+        log.error(f"Milestone check failed: {e}")
+
+
 def run_evaluator(run_id: str):
     """Run post-completion evaluation (metrics, quality, pattern detection)."""
     try:
@@ -541,7 +608,97 @@ def run_evaluator(run_id: str):
         log.error(f"Evaluator error for {run_id[:8]}: {e}")
 
 
+# --- Flag-file gating ---
+
+def should_dispatch() -> bool:
+    """Check if dispatch should proceed, using local flag file to avoid unnecessary API calls.
+
+    - Flag exists → dispatch (a run was recently started or is known active)
+    - Flag absent → do a lightweight DB scan every IDLE_SCAN_INTERVAL seconds.
+      If running runs found, touch the flag. If not, skip entirely.
+    """
+    if ACTIVE_FLAG.exists():
+        return True
+
+    # No flag — check if we should do a fallback scan
+    if IDLE_SCAN_FILE.exists():
+        age = time.time() - IDLE_SCAN_FILE.stat().st_mtime
+        if age < IDLE_SCAN_INTERVAL:
+            return False  # scanned recently, still idle
+
+    # Fallback scan: 1 lightweight API call
+    try:
+        runs = sb_select("antfarm_runs", {"status": "eq.running", "select": "id", "limit": "1"})
+        IDLE_SCAN_FILE.touch()
+        if runs:
+            ACTIVE_FLAG.touch()
+            log.info("Fallback scan found running run — activating")
+            return True
+    except Exception as e:
+        log.error(f"Fallback scan failed: {e}")
+
+    return False
+
+
+def clear_active_flag():
+    """Remove the active flag when no runs are running."""
+    try:
+        ACTIVE_FLAG.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+# --- Worktree cleanup ---
+
+def cleanup_worktree(context: dict):
+    """Remove git worktree if one was created for this run."""
+    wt = context.get("worktree_path", "")
+    original = context.get("original_repo", "")
+    if not wt or not original:
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", original, "worktree", "remove", "--force", wt],
+            capture_output=True, text=True, timeout=30,
+        )
+        log.info(f"Cleaned up worktree: {wt}")
+    except Exception as e:
+        log.error(f"Worktree cleanup failed: {e}")
+
+
 # --- Main dispatch ---
+
+def close_stale_runs():
+    """Close runs where all steps are done but the run is still 'running'.
+
+    Edge case: if the final step completed outside the dispatch loop (e.g., manual
+    antfarm step complete), the run stays stuck as 'running'. This catches that.
+    """
+    try:
+        running = sb_select("antfarm_runs", {"status": "eq.running", "select": "id,task"})
+        for run in running:
+            run_id = run["id"]
+            steps = sb_select("antfarm_steps", {
+                "run_id": f"eq.{run_id}",
+                "select": "status",
+            })
+            if not steps:
+                continue
+            terminal = all(s["status"] in ("completed", "skipped", "failed") for s in steps)
+            if terminal:
+                all_ok = all(s["status"] in ("completed", "skipped") for s in steps)
+                final_status = "completed" if all_ok else "failed"
+                sb_update("antfarm_runs", {"id": run_id}, {
+                    "status": final_status,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                task = run.get("task", "unknown")
+                notify(f"Antfarm run auto-closed ({final_status}): {task}")
+                log.info(f"AUTO-CLOSED run={run_id[:8]} status={final_status} task={task}")
+                run_evaluator(run_id)
+    except Exception as e:
+        log.error(f"Stale run check failed: {e}")
+
 
 def dispatch_once(run_id_filter: str | None = None) -> int:
     """Single dispatch pass. Returns number of steps dispatched."""
@@ -551,7 +708,8 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
 
     runs = sb_select("antfarm_runs", params)
     if not runs:
-        log.info("No running runs — disabling schedule")
+        log.info("No running runs — clearing flag, disabling schedule")
+        clear_active_flag()
         set_schedule_enabled(False)
         return 0
 
@@ -564,7 +722,7 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
         context = run.get("context") or {}
         if isinstance(context, str):
             context = json.loads(context)
-        repo = context.get("repo", "")
+        repo = context.get("worktree_path") or context.get("repo", "")
 
         try:
             wf = load_workflow(workflow_id)
@@ -630,6 +788,10 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
                 )
                 dispatched += 1
 
+                # Milestone check (25%/50%/75% progress notifications)
+                if not completion.get("runCompleted"):
+                    check_milestone(run_id, run.get("task", "unknown"))
+
                 if completion.get("runCompleted"):
                     task = run.get("task", "unknown")
                     if workflow_id == "content-factory":
@@ -637,6 +799,7 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
                     else:
                         notify(f"Antfarm run completed: {task}")
                     log.info(f"RUN COMPLETED: {run_id[:8]} — {task}")
+                    cleanup_worktree(context)
                     run_evaluator(run_id)
             else:
                 fail_result = antfarm_fail(step_id, result["error"])
@@ -651,7 +814,11 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
                         f"Antfarm run failed: {task}\n{result['error'][:200]}"
                     )
                     log.info(f"RUN FAILED: {run_id[:8]} — {task}")
+                    cleanup_worktree(context)
                     run_evaluator(run_id)
+
+    # Check for stuck runs that should be auto-closed
+    close_stale_runs()
 
     log.info(f"Pass complete — dispatched {dispatched} step(s)")
     return dispatched
@@ -674,6 +841,9 @@ def main():
         i += 1
 
     if once:
+        # Flag-file gating: skip entirely if no work is expected
+        if not run_id and not should_dispatch():
+            return
         dispatch_once(run_id)
     else:
         log.info("Starting continuous dispatch loop")
@@ -683,6 +853,7 @@ def main():
                 runs = [r for r in runs if r["id"] == run_id]
             if not runs:
                 log.info("No running runs — exiting continuous loop")
+                clear_active_flag()
                 set_schedule_enabled(False)
                 break
             dispatch_once(run_id)
