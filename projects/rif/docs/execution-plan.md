@@ -991,16 +991,9 @@ Replace GOG CLI's separate auth flow with the MC OAuth token. Scripts use the st
 
 **Benefit**: One login, everything connected. No separate `gog-auth.sh` step.
 
-### 2.2 — Onboarding chat
+### 2.2 — ~~Onboarding chat~~ **Pulled forward to Phase 0E**
 
-Interactive chat at `meetpif.com/onboard` that walks new users through:
-1. Account creation (guided)
-2. Credential collection (secure)
-3. Triggers provisioner
-4. Reports progress
-5. Runs smoke test
-
-Runs on Pif's Claude credentials. Hands off to user's own credentials when done.
+Conversational onboarding chat UI shipped in 0E (2026-03-09). Steps 1-3 (Welcome, Naming, Personality) and background intelligence API implemented. Remaining steps (4-7: Google Workspace, Telegram deep link, Provisioning, First Task) to be added as future PRDs.
 
 ### 2.3 — Instance health dashboard
 
@@ -1076,13 +1069,14 @@ Public build tracking Pif building a real SaaS (Rekon). Revenue counter, commit 
 Phase 0A (Platform Foundation)
     └──→ Phase 0B (MC Refactoring)
               └──→ Phase 0C (Instance Provisioner)
-                        ├──→ Phase 0D (Pif Migration) [optional, parallel]
+                        ├──→ Phase 0D (Open Registration) [parallel]
+                        │         └──→ Phase 0E (Onboarding Overhaul)
                         └──→ Phase 1 (Deploy Rif)
                                   └──→ Phase 2 (Scale & Polish)
                                             └──→ Phase 3 (Monetization)
 ```
 
-**Critical path**: 0A → 0B → 0C → 1. Everything else can be parallelized or deferred.
+**Critical path**: 0A → 0B → 0C → 1. 0D/0E run in parallel and feed into Phase 1.
 
 ---
 
@@ -1187,8 +1181,9 @@ Update this section as phases complete.
 | 0B | **Deployed** | 2026-03-07 | 2026-03-08 | PR #13 merged, deployed to meetpif.com, migrations 001-005 + 007 applied + backfilled. Google SSO working. See notes below. |
 | 0C | **Merged to main** | 2026-03-08 | 2026-03-08 | Antfarm run completed 12 stories. Reviewer fixes applied. Merged to main. Provisioner + deprovision scripts ready. |
 | 0D (Open Reg) | **Deployed** | 2026-03-08 | 2026-03-08 | Open registration + onboarding wizard + security hardening. Merged to main. Migrations 008-009 applied. Provision watcher daemon running. See notes below. |
+| 0E (Onboarding) | **Merged** | 2026-03-09 | 2026-03-09 | Conversational onboarding replacing wizard. 3 PRDs (Chat UI, Steps 1-3, Background Intel). All merged to assistant-platform main. Migration 010 ready. See notes below. |
 | 1 | **Ready** | — | — | All prerequisites met. Can provision first real instance. |
-| 2 | Not started | — | — | |
+| 2 | Not started | — | — | Phase 2.2 (onboarding chat) pulled forward into 0E. |
 | 3 | Not started | — | — | |
 
 ### 0B deployment notes (2026-03-08)
@@ -1284,6 +1279,63 @@ Run `454b9796` (failed at test step, code changes complete) — Security hardeni
 **Antfarm bugs fixed during this session:**
 1. Retry exhaustion path in `antfarm-dispatch.py` skipped evaluator/notify/cleanup — added missing calls
 2. Credential resolution in both `antfarm-dispatch.py` and `antfarm-evaluator.py` — now sources `~/.pif-env` for `pif-creds` fallback
+
+### 0E (Onboarding Overhaul) notes (2026-03-09)
+
+**What shipped:** Replaced the 0D form-based onboarding wizard with a conversational chat UI. Pulled forward Phase 2.2 (onboarding chat). Three PRDs executed via antfarm, all merged to `assistant-platform` main.
+
+**Spec:** `~/projects/rif/docs/onboarding-spec.md` — 7-step conversational flow (Welcome → Naming → Personality → Google Workspace → Telegram deep link → Provisioning → First Task), background intelligence, post-onboarding email sequence, friction analysis.
+
+**PRD 1 — Chat UI Component (antfarm run #34, `5281cbeb`):**
+- 9 user stories implemented (US-001 through US-009)
+- ChatMessage types + onboarding chat type system
+- Chat container with sequential message reveal, typing indicator, Pif avatar
+- Input types: text, URL, select, time
+- Options message type (radio selection)
+- Action buttons, progress bar, navigation (Back/Next)
+- Branch: `feat/onboarding-chat-ui` → merged to main
+
+**PRD 2 — Onboarding Steps 1-3 (antfarm run #35, `fa51e5eb`):**
+- 7 user stories implemented (US-001 through US-007)
+- State machine hook (`useOnboardingState`) with localStorage persistence
+- Welcome, Naming, Personality step message builders
+- Bridge to existing provision flow (submit + polling)
+- API enhancements: quiet hours, LinkedIn URL, optional bot_token, name in JWT
+- OnboardingPage rewrite using chat-based flow (old wizard removed)
+- 137 new tests across 10 files
+- Branch: `feat/onboarding-steps-1-3` → merged to main
+- Note: review step stuck in `waiting` state (run marked `completed`), cosmetic antfarm bug
+
+**PRD 3 — Background Intelligence API (antfarm run #36, `16ef07ff`):**
+- 6 user stories implemented (US-001 through US-006)
+- Migration 010: `background_intel` (JSONB), `background_intel_status`, `linkedin_status` columns on tenants
+- Company lookup by email domain (freemail filter → website scrape for og:title/description)
+- Web search via DuckDuckGo HTML for user name + company (extracts LinkedIn/Twitter/other mentions)
+- Background intel pipeline orchestrator (runs company lookup + web search in parallel)
+- Pipeline fires asynchronously via `setImmediate` on SSO auto-register — does not block login
+- `GET /api/onboarding/background` — returns intel status + results for authenticated tenant
+- `POST /api/onboarding/linkedin` — triggers Apify LinkedIn Profile Scraper, async polling for results
+- In-memory rate limit: max 1 LinkedIn scrape per tenant per process lifetime
+- 193 tests across 7 files
+- Branch: `feature/background-intel-api` (on mission-control) → manually merged to assistant-platform main
+- Manual merge required: PRD 3 was built on mission-control repo (path prefix `server/`) but target is assistant-platform (`mc/server/`). Existing auto-registration code (race-condition upsert, onboarding redirect, tenant status checks) preserved — only background intel trigger + name extraction added surgically.
+
+**Merge notes:**
+- PRDs 1+2 were merged directly to assistant-platform main (commits landed as individual story commits)
+- PRD 3 required manual adaptation: path remapping (`server/` → `mc/server/`), preserving the superior auto-registration flow from 0D, skipping `google-oauth.test.ts` changes (assistant-platform already had correct auto-register test assertions)
+- All three antfarm branches forked from the same mission-control commit (`b0783c0`), causing overlapping file conflicts between PRDs — resolved during merge
+
+**Not yet applied:**
+- Migration 010 not yet run against Supabase (schema ready in repo, needs `psql` apply)
+- `APIFY_API_TOKEN` env var not yet set on the server
+- Resend email infrastructure (SPF/DKIM/DMARC DNS records on Cloudflare) not yet configured
+- Steps 4-7 of onboarding flow (Google Workspace, Telegram deep link, Provisioning, First Task) — future PRDs
+
+**Review suggestions (non-blocking, from antfarm run #36 reviewer):**
+1. Move Apify token from query string to Authorization header
+2. Make LinkedIn rate limit DB-backed instead of in-memory (survives restart)
+3. Migrate static-analysis tests to behavioral tests
+4. Extract background intel into its own module (out of index.ts)
 
 ---
 
