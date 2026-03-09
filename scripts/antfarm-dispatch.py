@@ -46,7 +46,10 @@ SUPABASE_KEY = os.environ.get("PIF_SUPABASE_SERVICE_ROLE_KEY", "")
 if not SUPABASE_KEY:
     try:
         import subprocess as _sp
-        _result = _sp.run(["pif-creds", "get", "Supabase"], capture_output=True, text=True, check=True)
+        _result = _sp.run(
+            ["bash", "-c", "set -a; source ~/.pif-env 2>/dev/null; source ~/.env 2>/dev/null; set +a; pif-creds get Supabase"],
+            capture_output=True, text=True, check=True,
+        )
         SUPABASE_KEY = _result.stdout.strip()
     except Exception:
         SUPABASE_KEY = os.environ.get("PIF_SUPABASE_ANON_KEY", "")
@@ -217,14 +220,46 @@ def antfarm_complete(step_id: str, output: str) -> dict:
 
 
 def antfarm_fail(step_id: str, error: str) -> dict:
-    r = subprocess.run(
-        ["antfarm", "step", "fail", step_id, error[:2000]],
-        capture_output=True, text=True, timeout=30,
-    )
     try:
-        return json.loads(r.stdout)
-    except json.JSONDecodeError:
-        log.error(f"Fail parse error for {step_id}: {r.stdout[:200]}")
+        r = subprocess.run(
+            ["antfarm", "step", "fail", step_id, error[:2000]],
+            capture_output=True, text=True, timeout=30,
+        )
+        result = json.loads(r.stdout)
+        return result
+    except (json.JSONDecodeError, subprocess.TimeoutExpired, Exception) as e:
+        log.error(f"Fail CLI error for {step_id}: {e} — falling back to direct DB update")
+        # Fallback: directly mark step and run as failed in DB
+        try:
+            step_rows = sb_select("antfarm_steps", {
+                "id": f"eq.{step_id}",
+                "select": "run_id,retry_count,max_retries",
+            })
+            if step_rows:
+                step = step_rows[0]
+                new_retry = step.get("retry_count", 0) + 1
+                max_retries = step.get("max_retries", 2)
+                now_ts = datetime.now(timezone.utc).isoformat()
+
+                if new_retry > max_retries:
+                    sb_update("antfarm_steps", {"id": step_id}, {
+                        "status": "failed", "output": error[:2000],
+                        "retry_count": new_retry, "updated_at": now_ts,
+                    })
+                    sb_update("antfarm_runs", {"id": step["run_id"]}, {
+                        "status": "failed", "updated_at": now_ts,
+                    })
+                    log.info(f"Fallback: marked step={step_id} and run={step['run_id'][:8]} as failed")
+                    return {"retrying": False, "runFailed": True}
+                else:
+                    sb_update("antfarm_steps", {"id": step_id}, {
+                        "status": "pending", "retry_count": new_retry,
+                        "updated_at": now_ts,
+                    })
+                    log.info(f"Fallback: reset step={step_id} to pending (retry {new_retry}/{max_retries})")
+                    return {"retrying": True, "runFailed": False}
+        except Exception as db_err:
+            log.error(f"Fallback DB update also failed for {step_id}: {db_err}")
         return {}
 
 
@@ -483,6 +518,13 @@ def handle_retry_step(run: dict, current_step_id: str, step_config: dict,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
         log.info(f"RUN FAILED run={run_id[:8]} — {error_msg}")
+
+        # Notify, cleanup, and evaluate (same as normal failure path)
+        task = run.get("task", "unknown")
+        notify(f"Antfarm run failed: {task}\n{error_msg}")
+        cleanup_worktree(context)
+        run_evaluator(run_id)
+
         return True
 
     log.info(
@@ -669,33 +711,72 @@ def cleanup_worktree(context: dict):
 # --- Main dispatch ---
 
 def close_stale_runs():
-    """Close runs where all steps are done but the run is still 'running'.
-
-    Edge case: if the final step completed outside the dispatch loop (e.g., manual
-    antfarm step complete), the run stays stuck as 'running'. This catches that.
+    """Close runs where all steps are done but the run is still 'running',
+    or runs stuck in 'running' for more than 4 hours.
     """
     try:
-        running = sb_select("antfarm_runs", {"status": "eq.running", "select": "id,task"})
+        running = sb_select("antfarm_runs", {
+            "status": "eq.running",
+            "select": "id,task,created_at,context",
+        })
+        now = datetime.now(timezone.utc)
         for run in running:
             run_id = run["id"]
             steps = sb_select("antfarm_steps", {
                 "run_id": f"eq.{run_id}",
-                "select": "status",
+                "select": "id,status",
             })
             if not steps:
                 continue
-            terminal = all(s["status"] in ("completed", "skipped", "failed") for s in steps)
+
+            # Check 1: all steps terminal → auto-close
+            terminal = all(s["status"] in ("done", "completed", "skipped", "failed") for s in steps)
             if terminal:
-                all_ok = all(s["status"] in ("completed", "skipped") for s in steps)
+                all_ok = all(s["status"] in ("done", "completed", "skipped") for s in steps)
                 final_status = "completed" if all_ok else "failed"
                 sb_update("antfarm_runs", {"id": run_id}, {
                     "status": final_status,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "completed_at": now.isoformat(),
                 })
                 task = run.get("task", "unknown")
                 notify(f"Antfarm run auto-closed ({final_status}): {task}")
                 log.info(f"AUTO-CLOSED run={run_id[:8]} status={final_status} task={task}")
+                context = run.get("context") or {}
+                if isinstance(context, str):
+                    context = json.loads(context)
+                cleanup_worktree(context)
                 run_evaluator(run_id)
+                continue
+
+            # Check 2: run stuck for >4h → force-fail
+            created = run.get("created_at", "")
+            if created:
+                try:
+                    created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    age_hours = (now - created_dt).total_seconds() / 3600
+                    if age_hours > 4:
+                        sb_update("antfarm_runs", {"id": run_id}, {
+                            "status": "failed",
+                            "updated_at": now.isoformat(),
+                        })
+                        # Also fail any non-terminal steps
+                        for s in steps:
+                            if s["status"] not in ("done", "completed", "skipped", "failed"):
+                                sb_update("antfarm_steps", {"id": s.get("id", "")}, {
+                                    "status": "failed",
+                                    "output": f"Auto-failed: run stuck for {age_hours:.1f}h",
+                                    "updated_at": now.isoformat(),
+                                })
+                        task = run.get("task", "unknown")
+                        notify(f"Antfarm run force-failed (stuck {age_hours:.0f}h): {task}")
+                        log.info(f"FORCE-FAILED run={run_id[:8]} age={age_hours:.1f}h task={task}")
+                        context = run.get("context") or {}
+                        if isinstance(context, str):
+                            context = json.loads(context)
+                        cleanup_worktree(context)
+                        run_evaluator(run_id)
+                except (ValueError, TypeError) as e:
+                    log.error(f"Failed to parse created_at for {run_id[:8]}: {e}")
     except Exception as e:
         log.error(f"Stale run check failed: {e}")
 
