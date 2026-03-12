@@ -19,7 +19,8 @@ RAM_FREE=$(free -h | grep Mem | awk '{print $3 " / " $2}')
 UPTIME_INFO=$(uptime -p 2>/dev/null || echo "unknown")
 
 # Write heartbeat to Supabase
-curl -s -X POST "${SUPABASE_URL}/rest/v1/heartbeats" \
+TENANT_ID="${PIF_TENANT_ID:-c2818981-bcb9-4fde-83d8-272d72c7a3d1}"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${SUPABASE_URL}/rest/v1/heartbeats" \
     -H "apikey: ${SUPABASE_KEY}" \
     -H "Authorization: Bearer ${SUPABASE_KEY}" \
     -H "Content-Type: application/json" \
@@ -28,10 +29,15 @@ curl -s -X POST "${SUPABASE_URL}/rest/v1/heartbeats" \
         \"bot_status\": \"${BOT_STATUS}\",
         \"disk_free\": \"${DISK_FREE}\",
         \"ram_free\": \"${RAM_FREE}\",
-        \"uptime\": \"${UPTIME_INFO}\"
-    }" > /dev/null
+        \"uptime\": \"${UPTIME_INFO}\",
+        \"tenant_id\": \"${TENANT_ID}\"
+    }")
 
-echo "Heartbeat sent to Supabase (bot=${BOT_STATUS}, disk=${DISK_FREE}, ram=${RAM_FREE})"
+if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+    echo "Heartbeat sent to Supabase (bot=${BOT_STATUS}, disk=${DISK_FREE}, ram=${RAM_FREE})"
+else
+    echo "ERROR: Heartbeat insert failed (HTTP ${HTTP_CODE})"
+fi
 
 # Ping external uptime monitor (if configured)
 if [ -n "$UPTIME_PING_URL" ]; then
