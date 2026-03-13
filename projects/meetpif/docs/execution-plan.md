@@ -62,8 +62,8 @@ These were resolved in the March 7 planning session. Do not revisit without Pavo
 │   │   ├── instance-heartbeat.timer.tmpl
 │   │   ├── instance-comment-listener.service.tmpl
 │   │   ├── instance-schedule-checker.timer.tmpl
-│   │   ├── instance-claude-refresh.service.tmpl
-│   │   └── instance-claude-refresh.timer.tmpl
+│   │   ├── instance-claude-refresh.service.tmpl  ← vestigial (server-side auto-refresh)
+│   │   └── instance-claude-refresh.timer.tmpl    ← vestigial (server-side auto-refresh)
 │   ├── mc-api.env.tmpl
 │   ├── telegram.env.tmpl
 │   ├── mcp.json.tmpl
@@ -157,7 +157,7 @@ These were resolved in the March 7 planning session. Do not revisit without Pavo
 - **Supabase tenancy**: All instances share Pif's Supabase project. Each instance has a unique `tenant_id`. RLS policies + API-level filtering ensure each instance only sees its own tasks, projects, comments, schedules, and credentials.
 - **Systemd services**: Named per-instance (`rif-telegram.service`, `rif-heartbeat.service`). Run as the instance's Linux user. MC API is shared (one process, multi-tenant) — not per-instance.
 - **nginx**: Single `meetpif.com` server block. One API server handles all tenants — tenant determined by authenticated session, not by URL.
-- **Claude Code**: Each instance has its own `claude login` under their Linux user. Own subscription, own usage.
+- **Claude Code**: Each instance connects their own Claude subscription via OAuth BYOK in MC settings. Tokens stored encrypted in `tenant_claude_credentials`, auto-refreshed server-side. No CLI `claude login` needed.
 - **Telegram**: Each instance has its own bot token.
 - **No cross-reads**: Instance user can't read `/root/` (Pif) or other instance home dirs. Platform at `/opt/` is read-only.
 
@@ -782,7 +782,7 @@ HEARTBEAT_INTERVAL_MIN="30"
 HEARTBEAT_OFFSET_MIN="15"               # Offset from :00 to avoid collision with Pif
 
 # Claude Code
-# (User runs `claude login` manually after provisioning — interactive OAuth flow)
+# (User connects via OAuth BYOK in MC settings — no CLI login needed)
 ```
 
 **Acceptance**: Schema documented with all fields and defaults.
@@ -832,7 +832,7 @@ provision-instance.sh <instance.conf>
   │             ├── <instance>-heartbeat.timer + .service
   │             ├── <instance>-comment-listener.service
   │             ├── <instance>-schedule-checker.timer
-  │             └── <instance>-claude-refresh.timer + .service
+  │             └── (claude-refresh removed — server-side auto-refresh via OAuth BYOK)
   ├── Phase 10: Set file permissions (chmod 700 home, chmod 600 .pif-env)
   │             Configure Claude Code settings.json with security restrictions:
   ├── Phase 11: Run initial QMD index build (system-wide binary, per-user index)
@@ -846,11 +846,11 @@ provision-instance.sh <instance.conf>
 Each phase is **idempotent** — can re-run safely if interrupted. Each phase logs to `/home/<instance>/logs/provision.log`.
 
 **What the provisioner does NOT do** (requires user interaction):
-- `claude login` — interactive OAuth, user must do this in a terminal session
+- Claude OAuth BYOK — user connects their Claude subscription via MC settings after first login
 - Google account authentication for GOG — deferred to Phase 2
 - Personalization (SOUL.md, USER.md, WORKING.md content) — done in post-provision onboarding session
 
-**Acceptance**: Running provisioner on a fresh config creates a fully working instance (minus Claude login).
+**Acceptance**: Running provisioner on a fresh config creates a fully working instance (minus Claude OAuth connection).
 
 ### 0C.5 — Create deprovision script
 
@@ -942,15 +942,9 @@ No DNS setup needed — all instances share `meetpif.com`. Tenant isolation is h
 
 Wait for all 14 phases to complete.
 
-### 1.3 — Claude Code login
+### 1.3 — Claude OAuth BYOK connection
 
-```bash
-su - rif
-claude login
-# Girlfriend authenticates in browser with her Claude account
-```
-
-This is the one interactive step she needs to do (or Pavol does it on her machine/session).
+User logs into MC, navigates to Settings → Claude Connection, and clicks "Connect Claude". This triggers the OAuth PKCE flow — user authenticates with Anthropic in the browser, and MC stores the encrypted tokens in `tenant_claude_credentials`. Server-side auto-refresh handles token lifecycle. No CLI access needed.
 
 ### 1.4 — Personalization session
 
@@ -1086,7 +1080,7 @@ These are prerequisites that must exist before the provisioner can run.
 
 ### Node.js availability
 
-Claude Code CLI is a standalone binary at `/usr/local/bin/claude-bin` (symlinked from `/usr/local/bin/claude`). Accessible to all users — no per-user install needed. Each user just needs `claude login` for their own auth token (stored in `~/.claude/`).
+Claude Code CLI is a standalone binary at `/usr/local/bin/claude-bin` (symlinked from `/usr/local/bin/claude`). Accessible to all users — no per-user install needed. Auth tokens are managed server-side via OAuth BYOK — the MC API writes per-tenant credentials to `/tmp/claude-tenants/<tenant_id>/.claude/` on demand. No per-user `claude login` needed.
 
 Node.js is installed system-wide. Instance users need it for npm packages (e.g., comment-listener dependencies) but not for Claude Code or QMD themselves.
 
@@ -1119,14 +1113,13 @@ The provisioner applies these after installing `claude-code-telegram`. The `upda
 
 ### Claude Code token refresh per instance
 
-Pif has `~/scripts/refresh-claude-token.sh` running every 50 min via systemd timer. Each instance needs the same mechanism.
+~~Per-instance systemd timers replaced by server-side auto-refresh (2026-03-13).~~
 
-**Implementation**: Platform script at `/opt/assistant-platform/scripts/refresh-claude-token.sh` (parameterized for `$HOME`). Provisioner creates a per-instance systemd timer:
-- `<instance>-claude-refresh.timer` — every 50 min
-- `<instance>-claude-refresh.service` — runs the refresh script as the instance user
-- On failure: sends Telegram alert to the instance's bot
+The MC API server's `refreshTenantTokensIfNeeded()` function auto-refreshes OAuth tokens within 5 min of expiry. Called on every `/api/internal/claude-config` request (from comment-listener, antfarm-dispatch, heartbeat). No per-instance timer needed.
 
-Add to the systemd templates and provisioner Phase 10.
+Pif's own `~/scripts/refresh-claude-token.sh` (50-min timer) still runs separately — Pif doesn't use the tenant credential system.
+
+The `instance-claude-refresh.service.tmpl` and `instance-claude-refresh.timer.tmpl` in the templates directory are now vestigial and can be removed during next provisioner cleanup.
 
 ### Telegram bot Python environment
 
@@ -1164,8 +1157,8 @@ These were in the original spec but are explicitly deferred. They are NOT in the
 | Shared VPS resource contention | Medium | Offset heartbeat schedules. Add systemd resource limits (Phase 2.5). Monitor. |
 | Claude Code subscription cost for users | Medium | Clear pricing docs. Claude Pro ($20/mo) is the minimum. Max ($100/mo) for heavy use. |
 | Script path refactoring introduces bugs | Medium | Test with throwaway instance (0C.6) before deploying Pif. |
-| Girlfriend can't run `claude login` | Low | Pavol does it for her via SSH / screen share. One-time step. |
-| Claude OAuth token expires silently | High | Per-instance refresh timer (every 50 min) + Telegram alert on failure. Replicates Pif's pattern. |
+| ~~Girlfriend can't run `claude login`~~ | ~~Low~~ | ~~Eliminated by OAuth BYOK — user connects via MC settings in the browser. No CLI access needed.~~ |
+| Claude OAuth token expires silently | Medium | Server-side auto-refresh on every `/api/internal/claude-config` call. Tokens refreshed within 5 min of expiry. If refresh fails, spawner gets an error response and retries. Risk reduced from High — no longer dependent on external timer reliability. |
 | Telegram bot patches lost on upgrade | Medium | Patches stored centrally in platform. update-platform.sh re-applies after upgrade. |
 | Google OAuth redirect URIs don't scale | ~~Eliminated~~ | Single shared URL (`meetpif.com`) — one redirect URI for all tenants. |
 
