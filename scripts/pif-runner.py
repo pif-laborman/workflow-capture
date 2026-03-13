@@ -12,11 +12,13 @@ Usage:
     python3 ~/scripts/pif-runner.py --recover-stuck
 """
 
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -27,21 +29,40 @@ import yaml
 
 # --- Configuration ---
 
+# Ensure .pif-env is sourced so env vars are available to this process
+# and all child bash subprocesses (prevents "JWT empty" errors)
+_pif_env = Path.home() / ".pif-env"
+if _pif_env.exists():
+    with open(_pif_env) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#"):
+                # Strip optional 'export ' prefix and parse KEY="VALUE"
+                _line = _line.removeprefix("export ").strip()
+                if "=" in _line:
+                    _key, _, _val = _line.partition("=")
+                    _val = _val.strip().strip('"').strip("'")
+                    os.environ.setdefault(_key.strip(), _val)
+
 WORKFLOWS_DIR = Path.home() / "workflows"
 SCRIPTS_DIR = Path.home() / "scripts"
 AGENTS_DIR = Path.home() / "agents"
 
 SUPABASE_URL = os.environ.get("PIF_SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("PIF_SUPABASE_SERVICE_ROLE_KEY", "")
+
+# Service role key — needed for RLS-bypassing writes (runs, steps, events).
+# Priority: MC API env file (authoritative) → env var fallback.
+SUPABASE_KEY = ""
+try:
+    for _line in open("/etc/mission-control-api.env"):
+        if _line.startswith("SUPABASE_SERVICE_KEY="):
+            SUPABASE_KEY = _line.strip().split("=", 1)[1]
+            break
+except Exception:
+    pass
 if not SUPABASE_KEY:
-    # Fetch service role key from pif-creds (logins table)
-    try:
-        import subprocess as _sp, json as _json
-        _result = _sp.run(["pif-creds", "get", "Supabase", "--json"], capture_output=True, text=True, check=True)
-        _rec = _json.loads(_result.stdout)
-        SUPABASE_KEY = _rec.get("password", "")
-    except Exception:
-        SUPABASE_KEY = os.environ.get("PIF_SUPABASE_ANON_KEY", "")
+    SUPABASE_KEY = os.environ.get("PIF_SUPABASE_SERVICE_ROLE_KEY",
+                                   os.environ.get("PIF_SUPABASE_ANON_KEY", ""))
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -51,15 +72,82 @@ SUPABASE_HEADERS = {
 
 TELEGRAM_SEND = SCRIPTS_DIR / "telegram-send.sh"
 
+# Default tenant for Pif's own operations (Pavol's tenant)
+PIF_TENANT_ID = "c2818981-bcb9-4fde-83d8-272d72c7a3d1"
+
+# Workflow progress pings — sends Telegram updates at each step transition
+PROGRESS_PING_ENABLED = True
+PROGRESS_PING_MIN_STEPS = 3  # Only ping for workflows with 3+ steps
+
+
+def send_progress_ping(workflow_name: str, step_id: str, step_index: int, total_steps: int, status: str):
+    """Send a Telegram progress update at step transitions."""
+    if not PROGRESS_PING_ENABLED:
+        return
+    icons = {"started": "▶️", "completed": "✅", "failed": "❌"}
+    icon = icons.get(status, "⏳")
+    msg = f"{icon} {workflow_name} [{step_index}/{total_steps}]: {step_id} {status}"
+    try:
+        subprocess.run(
+            [str(TELEGRAM_SEND), msg],
+            capture_output=True, timeout=15,
+        )
+    except Exception:
+        pass  # Don't let ping failures break the workflow
+
+
+# --- "Still working" auto-ping ---
+# Sends Telegram ping if a step runs longer than STILL_WORKING_THRESHOLD_SEC.
+# Repeats every STILL_WORKING_INTERVAL_SEC until the step finishes.
+
+STILL_WORKING_THRESHOLD_SEC = 90
+STILL_WORKING_INTERVAL_SEC = 90
+
+
+def start_still_working_timer(workflow_name: str, step_id: str) -> threading.Event:
+    """Start a background thread that pings Telegram if step takes >90s.
+    Returns an Event to signal when the step is done."""
+    stop_event = threading.Event()
+
+    def _ping_loop():
+        # Wait for initial threshold
+        if stop_event.wait(STILL_WORKING_THRESHOLD_SEC):
+            return  # Step finished before threshold
+        # Step is still running — start pinging
+        while not stop_event.is_set():
+            try:
+                subprocess.run(
+                    [str(TELEGRAM_SEND), f"Still working on {workflow_name}/{step_id}..."],
+                    capture_output=True, timeout=15,
+                )
+            except Exception:
+                pass
+            if stop_event.wait(STILL_WORKING_INTERVAL_SEC):
+                return
+
+    t = threading.Thread(target=_ping_loop, daemon=True)
+    t.start()
+    return stop_event
+
 
 # --- Supabase helpers ---
 
+# Tables that have a tenant_id column (per migration 015)
+_TENANT_TABLES = {
+    "runs", "events", "heartbeats", "tasks", "task_comments",
+    "task_status_transitions", "messages", "projects", "schedules",
+    "triggers", "policies", "logins", "recordings", "activity_feed",
+}
+
 def sb_insert(table: str, data: dict) -> dict:
     """Insert a row into a Supabase table."""
+    if "tenant_id" not in data and table in _TENANT_TABLES:
+        data = {**data, "tenant_id": PIF_TENANT_ID}
     r = requests.post(
         f"{SUPABASE_URL}/rest/v1/{table}",
         headers=SUPABASE_HEADERS,
         json=data,
+        timeout=30,
     )
     r.raise_for_status()
     rows = r.json()
@@ -70,14 +158,14 @@ def sb_update(table: str, match: dict, data: dict):
     """Update rows in a Supabase table matching conditions."""
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     params = {f"{k}": f"eq.{v}" for k, v in match.items()}
-    r = requests.patch(url, headers=SUPABASE_HEADERS, params=params, json=data)
+    r = requests.patch(url, headers=SUPABASE_HEADERS, params=params, json=data, timeout=30)
     r.raise_for_status()
 
 
 def sb_select(table: str, params: dict) -> list:
     """Select rows from a Supabase table."""
     headers = {**SUPABASE_HEADERS, "Prefer": "return=representation"}
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers, params=params)
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=headers, params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -112,7 +200,7 @@ def load_workflow(workflow_id: str) -> dict:
 # --- Cap gates (VoxYZ pattern) ---
 
 def can_start_workflow(workflow_id: str) -> tuple[bool, str]:
-    """Check if a workflow can start (dedup + concurrency limits)."""
+    """Check if a workflow can start (dedup + concurrency + cooldown)."""
     # Check if already running
     running = sb_select("runs", {
         "workflow_id": f"eq.{workflow_id}",
@@ -120,6 +208,15 @@ def can_start_workflow(workflow_id: str) -> tuple[bool, str]:
     })
     if running:
         return False, f"Workflow {workflow_id} is already running"
+
+    # Cooldown: skip if same workflow completed/failed within the last 2 minutes
+    cooldown_since = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+    recent = sb_select("runs", {
+        "workflow_id": f"eq.{workflow_id}",
+        "completed_at": f"gt.{cooldown_since}",
+    })
+    if recent:
+        return False, f"Workflow {workflow_id} completed within last 2 minutes (cooldown)"
 
     # Check max concurrent
     max_concurrent = get_policy("max_concurrent_workflows", default=2)
@@ -132,28 +229,43 @@ def can_start_workflow(workflow_id: str) -> tuple[bool, str]:
 
 # --- Template injection ---
 
+# Max size for a single template variable value (bytes).
+# The full rendered prompt must fit in a single execve argument (MAX_ARG_STRLEN = 128KB on Linux).
+# With ~35KB of agent context overhead, cap each variable at 60KB to stay safe.
+MAX_TEMPLATE_VAR_SIZE = 60_000
+
 def render_template(template: str, variables: dict) -> str:
     """Replace {{variable}} placeholders with values from prior steps."""
     def replacer(match):
         key = match.group(1).strip()
-        return variables.get(key, "")
+        val = variables.get(key, "")
+        if len(val) > MAX_TEMPLATE_VAR_SIZE:
+            val = val[:MAX_TEMPLATE_VAR_SIZE] + f"\n\n[... truncated from {len(val)} to {MAX_TEMPLATE_VAR_SIZE} bytes ...]"
+        return val
     return re.sub(r"\{\{(\w+)\}\}", replacer, template)
 
 
 # --- Output parsing ---
 
 def parse_output(output: str) -> dict:
-    """Parse KEY: value pairs from step output, supporting multi-line values."""
+    """Parse KEY: value pairs from step output, supporting multi-line values.
+
+    A separator line (--- or blank) after a short single-line value commits
+    that key immediately, preventing trailing free-form text from being
+    accumulated into numeric/short fields like PROPOSAL_COUNT.
+    """
     variables = {"_raw": output}
     pending_key = None
     pending_value = ""
+    pending_is_short = False  # True if value so far is a single short line
 
     def commit():
-        nonlocal pending_key, pending_value
+        nonlocal pending_key, pending_value, pending_is_short
         if pending_key:
             variables[pending_key.lower()] = pending_value.strip()
         pending_key = None
         pending_value = ""
+        pending_is_short = False
 
     for line in output.split("\n"):
         m = re.match(r"^([A-Z_]+):\s*(.*)", line)
@@ -161,8 +273,16 @@ def parse_output(output: str) -> dict:
             commit()
             pending_key = m.group(1)
             pending_value = m.group(2)
+            pending_is_short = 0 < len(pending_value.strip()) < 20
         elif pending_key:
-            pending_value += "\n" + line
+            # If the pending value is short (e.g. a number) and we hit a
+            # blank line or separator, commit it to avoid accumulating junk.
+            if pending_is_short and (not line.strip() or line.strip().startswith("---")):
+                commit()
+            else:
+                pending_value += "\n" + line
+                if line.strip():
+                    pending_is_short = False
 
     commit()
     return variables
@@ -219,6 +339,10 @@ def execute_step(step: dict, variables: dict, run_id: str) -> tuple[bool, str, d
     })
     step_db_id = step_row.get("id")
 
+    # Start still-working timer
+    wf_name = variables.get("_workflow_name", variables.get("_workflow_id", "workflow"))
+    stop_ping = start_still_working_timer(wf_name, step_id)
+
     try:
         if agent == "bash":
             result = subprocess.run(
@@ -237,9 +361,11 @@ def execute_step(step: dict, variables: dict, run_id: str) -> tuple[bool, str, d
                 prompt = f"{context}\n\n---\n\nTask:\n{rendered_input}"
 
             model = step.get("model") or get_agent_model(agent_name) or "sonnet"
-            cmd = ["claude", "--print", "--model", model, prompt]
+            cmd = ["claude", "--print", "--model", model]
+            # Unset CLAUDECODE to allow nested claude calls from workflow runner
+            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=300,
+                cmd, input=prompt, capture_output=True, text=True, timeout=300, env=env,
             )
             output = result.stdout
             success = result.returncode == 0
@@ -253,9 +379,11 @@ def execute_step(step: dict, variables: dict, run_id: str) -> tuple[bool, str, d
                 prompt = f"{context}\n\n---\n\nTask:\n{rendered_input}"
 
             model = step.get("model") or get_agent_model(agent_name) or "sonnet"
-            cmd = ["claude", "-p", prompt, "--model", model, "--output-format", "text"]
+            cmd = ["claude", "-p", "--model", model, "--output-format", "text"]
+            # Unset CLAUDECODE to allow nested claude calls from workflow runner
+            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=600,
+                cmd, input=prompt, capture_output=True, text=True, timeout=600, env=env,
             )
             output = result.stdout
             success = result.returncode == 0
@@ -270,6 +398,9 @@ def execute_step(step: dict, variables: dict, run_id: str) -> tuple[bool, str, d
     except Exception as e:
         output = f"Step {step_id} error: {e}"
         success = False
+    finally:
+        # Stop the still-working ping thread
+        stop_ping.set()
 
     # Strip markdown bold from output for reliable KEY: value parsing
     output_clean = output.replace("**", "")
@@ -404,15 +535,23 @@ def run_workflow(workflow_id: str, task: str = "", triggered_by: str = "manual")
     # Initialize variables with workflow metadata
     variables = {
         "_workflow_id": workflow_id,
+        "_workflow_name": workflow.get("name", workflow_id),
         "_run_id": run_id,
         "_task": task,
     }
 
     # Execute steps sequentially
     all_success = True
-    for step in steps:
+    total_steps = len(steps)
+    ping_enabled = total_steps >= PROGRESS_PING_MIN_STEPS
+    wf_name = workflow.get("name", workflow_id)
+
+    for step_index, step in enumerate(steps, 1):
         step_id = step["id"]
         print(f"  Step: {step_id} (agent={step.get('agent', 'bash')})")
+
+        if ping_enabled:
+            send_progress_ping(wf_name, step_id, step_index, total_steps, "started")
 
         success, output, parsed = execute_step(step, variables, run_id)
 
@@ -426,8 +565,12 @@ def run_workflow(workflow_id: str, task: str = "", triggered_by: str = "manual")
 
         if success:
             print(f"  Step '{step_id}' completed")
+            if ping_enabled:
+                send_progress_ping(wf_name, step_id, step_index, total_steps, "completed")
         else:
             print(f"  Step '{step_id}' failed")
+            if ping_enabled:
+                send_progress_ping(wf_name, step_id, step_index, total_steps, "failed")
             recovered = handle_failure(step, variables, run_id, steps)
             if not recovered:
                 all_success = False
@@ -691,7 +834,20 @@ def main():
     cmd = sys.argv[1]
 
     if cmd == "--check-schedules":
-        check_schedules()
+        # Lockfile prevents parallel check-schedules from piling up.
+        # If a previous run is still going (workflow took >1 min), skip.
+        lockfile = Path("/tmp/pif-check-schedules.lock")
+        lock_fd = open(lockfile, "w")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Another check-schedules is already running, skipping")
+            sys.exit(0)
+        try:
+            check_schedules()
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            lock_fd.close()
     elif cmd == "--check-triggers":
         check_triggers()
     elif cmd == "--recover-stuck":
