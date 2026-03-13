@@ -1321,7 +1321,7 @@ Run `454b9796` (failed at test step, code changes complete) — Security hardeni
 **Not yet applied:**
 - ~~Migration 010 not yet run against Supabase~~ → **Applied 2026-03-12**
 - ~~`APIFY_API_TOKEN` env var not yet set on the server~~ → **Set 2026-03-12** (in `platform.env` + `.pif-env`)
-- Resend email infrastructure (SPF/DKIM/DMARC DNS records on Cloudflare) not yet configured
+- ~~Resend email infrastructure (SPF/DKIM/DMARC DNS records on Cloudflare) not yet configured~~ → **Done**
 - Steps 4-7 of onboarding flow (Google Workspace, Telegram deep link, Provisioning, First Task) — future PRDs
 
 **Review suggestions (non-blocking, from antfarm run #36 reviewer):**
