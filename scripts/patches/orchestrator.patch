@@ -1,0 +1,756 @@
+--- /root/.cache/uv/git-v0/checkouts/bf2f6f201324d50e/d6c07a0/src/bot/orchestrator.py	2026-02-21 22:36:06.281163528 +0100
++++ src/bot/orchestrator.py	2026-03-14 14:20:58.904543869 +0100
+@@ -8,8 +8,6 @@
+ import asyncio
+ import os
+ import re
+-import subprocess
+-import tempfile
+ import time
+ from pathlib import Path
+ from typing import Any, Callable, Dict, List, Optional
+@@ -25,7 +23,7 @@
+     filters,
+ )
+ 
+-from ..claude.exceptions import ClaudeToolValidationError
++from ..claude.exceptions import ClaudeProcessError, ClaudeTimeoutError, ClaudeToolValidationError
+ from ..claude.sdk_integration import StreamUpdate
+ from ..config.settings import Settings
+ from ..projects import PrivateTopicsUnavailableError
+@@ -33,6 +31,61 @@
+ 
+ logger = structlog.get_logger()
+ 
++# -- Supabase Storage upload helper ------------------------------------------
++
++_EXT_TO_MIME = {
++    "png": "image/png",
++    "jpg": "image/jpeg",
++    "webp": "image/webp",
++    "gif": "image/gif",
++}
++
++
++async def _upload_to_supabase_storage(
++    image_bytes: bytes,
++    object_path: str,
++    content_type: str = "image/png",
++) -> str | None:
++    """Upload bytes to the Supabase Storage 'media' bucket (fire-and-forget).
++
++    Returns the object path on success, None on failure.
++    """
++    import os
++
++    import httpx
++
++    supabase_url = os.environ.get("PIF_SUPABASE_URL")
++    supabase_key = os.environ.get("PIF_SUPABASE_ANON_KEY")
++
++    if not supabase_url or not supabase_key:
++        logger.warning("Supabase credentials not set, skipping photo upload")
++        return None
++
++    url = f"{supabase_url}/storage/v1/object/media/{object_path}"
++    headers = {
++        "Authorization": f"Bearer {supabase_key}",
++        "apikey": supabase_key,
++        "Content-Type": content_type,
++    }
++
++    try:
++        async with httpx.AsyncClient(timeout=30.0) as client:
++            resp = await client.post(url, content=image_bytes, headers=headers)
++            if resp.status_code in (200, 201):
++                logger.info("Uploaded photo to Supabase Storage", path=object_path)
++                return object_path
++            else:
++                logger.warning(
++                    "Supabase Storage upload failed",
++                    status=resp.status_code,
++                    body=resp.text[:200],
++                )
++                return None
++    except Exception as e:
++        logger.warning("Supabase Storage upload error", error=str(e))
++        return None
++
++
+ # Patterns that look like secrets/credentials in CLI arguments
+ _SECRET_PATTERNS: List[re.Pattern[str]] = [
+     # API keys / tokens (sk-ant-..., sk-..., ghp_..., gho_..., github_pat_..., xoxb-...)
+@@ -324,12 +377,9 @@
+             group=10,
+         )
+ 
+-        # Voice messages -> transcribe with Whisper, then Claude
++        # Voice messages -> transcribe -> Claude
+         app.add_handler(
+-            MessageHandler(
+-                filters.VOICE | filters.AUDIO,
+-                self._inject_deps(self.agentic_voice),
+-            ),
++            MessageHandler(filters.VOICE, self._inject_deps(self.agentic_voice)),
+             group=10,
+         )
+ 
+@@ -386,13 +436,6 @@
+             group=10,
+         )
+         app.add_handler(
+-            MessageHandler(
+-                filters.VOICE | filters.AUDIO,
+-                self._inject_deps(message.handle_voice_message),
+-            ),
+-            group=10,
+-        )
+-        app.add_handler(
+             CallbackQueryHandler(self._inject_deps(callback.handle_callback_query))
+         )
+ 
+@@ -805,6 +848,180 @@
+                 claude_response.content
+             )
+ 
++        except ClaudeTimeoutError:
++            # Check if a workflow is currently running — if so, don't auto-retry
++            # because the retry would re-launch the same workflow in a loop.
++            _workflow_running = False
++            try:
++                import httpx as _httpx
++                _sb_url = os.environ.get("PIF_SUPABASE_URL", "")
++                _sb_key = os.environ.get("PIF_SUPABASE_ANON_KEY", "")
++                if _sb_url and _sb_key:
++                    async with _httpx.AsyncClient(timeout=5.0) as _client:
++                        _resp = await _client.get(
++                            f"{_sb_url}/rest/v1/runs",
++                            params={"status": "eq.running", "select": "id", "limit": "1"},
++                            headers={
++                                "apikey": _sb_key,
++                                "Authorization": f"Bearer {_sb_key}",
++                            },
++                        )
++                        if _resp.status_code == 200 and _resp.json():
++                            _workflow_running = True
++            except Exception:
++                pass  # If check fails, allow retry (safe default)
++
++            if _workflow_running:
++                logger.warning(
++                    "Timeout with active workflow — skipping auto-retry to prevent loop",
++                    user_id=user_id,
++                )
++                try:
++                    await progress_msg.edit_text(
++                        "⏰ Timed out — a workflow is still running, skipping auto-retry."
++                    )
++                except Exception:
++                    pass
++                from .utils.formatting import FormattedMessage
++                formatted_messages = [
++                    FormattedMessage(
++                        "Session timed out while a workflow was running. "
++                        "The workflow will finish on its own — check back shortly.",
++                        parse_mode=None,
++                    )
++                ]
++            else:
++                # Auto-retry: the session is still valid, just tell Claude to continue
++                retry_session_id = context.user_data.get("claude_session_id") or session_id
++                logger.warning(
++                    "Timeout — auto-retrying with continue prompt",
++                    session_id=retry_session_id,
++                    user_id=user_id,
++                )
++                try:
++                    await progress_msg.edit_text("⏰ Timed out — retrying automatically...")
++                except Exception:
++                    pass
++
++                try:
++                    # Reset verbose log for retry
++                    tool_log.clear()
++                    start_time = time.time()
++
++                    claude_response = await claude_integration.run_command(
++                        prompt=(
++                            "This session is being continued from a previous conversation "
++                            "that ran out of context. Continue with the last task that you "
++                            "were asked to work on."
++                        ),
++                        working_directory=current_dir,
++                        user_id=user_id,
++                        session_id=retry_session_id,
++                        on_stream=on_stream,
++                        force_new=False,
++                    )
++
++                    if force_new:
++                        context.user_data["force_new_session"] = False
++
++                    context.user_data["claude_session_id"] = claude_response.session_id
++
++                    from .handlers.message import _update_working_directory_from_claude_response
++
++                    _update_working_directory_from_claude_response(
++                        claude_response, context, self.settings, user_id
++                    )
++
++                    from .utils.formatting import ResponseFormatter
++
++                    formatter = ResponseFormatter(self.settings)
++                    formatted_messages = formatter.format_claude_response(
++                        claude_response.content
++                    )
++
++                except Exception as retry_err:
++                    success = False
++                    logger.error(
++                        "Auto-retry after timeout also failed",
++                        error=str(retry_err),
++                        user_id=user_id,
++                    )
++                    from .handlers.message import _format_error_message
++                    from .utils.formatting import FormattedMessage
++
++                    formatted_messages = [
++                        FormattedMessage(_format_error_message(retry_err), parse_mode="HTML")
++                    ]
++
++        except ClaudeProcessError as e:
++            # Auth errors (401/403) are often transient — token refresh race.
++            # Retry once after a short delay to pick up the refreshed token.
++            error_str_lower = str(e).lower()
++            _is_auth_error = any(
++                kw in error_str_lower
++                for kw in ("401", "403", "authenticate", "authentication_error", "expired")
++            )
++            if _is_auth_error:
++                logger.warning(
++                    "Auth error detected — retrying once after delay",
++                    error=str(e),
++                    user_id=user_id,
++                )
++                try:
++                    await progress_msg.edit_text("🔑 Auth hiccup — retrying...")
++                except Exception:
++                    pass
++
++                await asyncio.sleep(3)
++
++                try:
++                    tool_log.clear()
++                    claude_response = await claude_integration.run_command(
++                        prompt=message_text,
++                        working_directory=current_dir,
++                        user_id=user_id,
++                        session_id=None,
++                        on_stream=on_stream,
++                        force_new=True,
++                    )
++
++                    context.user_data["claude_session_id"] = claude_response.session_id
++
++                    from .handlers.message import _update_working_directory_from_claude_response
++
++                    _update_working_directory_from_claude_response(
++                        claude_response, context, self.settings, user_id
++                    )
++
++                    from .utils.formatting import ResponseFormatter
++
++                    formatter = ResponseFormatter(self.settings)
++                    formatted_messages = formatter.format_claude_response(
++                        claude_response.content
++                    )
++                except Exception as retry_err:
++                    success = False
++                    logger.error(
++                        "Auth retry also failed",
++                        error=str(retry_err),
++                        user_id=user_id,
++                    )
++                    from .handlers.message import _format_error_message
++                    from .utils.formatting import FormattedMessage
++
++                    formatted_messages = [
++                        FormattedMessage(_format_error_message(retry_err), parse_mode="HTML")
++                    ]
++            else:
++                success = False
++                logger.error("Claude process error", error=str(e), user_id=user_id)
++                from .handlers.message import _format_error_message
++                from .utils.formatting import FormattedMessage
++
++                formatted_messages = [
++                    FormattedMessage(_format_error_message(e), parse_mode="HTML")
++                ]
++
+         except ClaudeToolValidationError as e:
+             success = False
+             logger.error("Tool validation error", error=str(e), user_id=user_id)
+@@ -1014,24 +1231,69 @@
+     async def agentic_photo(
+         self, update: Update, context: ContextTypes.DEFAULT_TYPE
+     ) -> None:
+-        """Process photo -> Claude, minimal chrome."""
+-        user_id = update.effective_user.id
+-
+-        features = context.bot_data.get("features")
+-        image_handler = features.get_image_handler() if features else None
++        """Process photo -> save to disk -> Claude reads via Read tool."""
++        import os as _os
+ 
+-        if not image_handler:
+-            await update.message.reply_text("Photo processing is not available.")
+-            return
++        user_id = update.effective_user.id
+ 
+         chat = update.message.chat
+         await chat.send_action("typing")
+         progress_msg = await update.message.reply_text("Working...")
+ 
++        image_path: str | None = None
+         try:
++            # Download the largest photo size
+             photo = update.message.photo[-1]
+-            processed_image = await image_handler.process_image(
+-                photo, update.message.caption
++            file = await photo.get_file()
++            image_bytes = await file.download_as_bytearray()
++
++            # Detect format from magic bytes
++            if image_bytes[:4] == b"\x89PNG":
++                ext = "png"
++            elif image_bytes[:3] == b"\xff\xd8\xff":
++                ext = "jpg"
++            elif image_bytes[:4] == b"RIFF" and b"WEBP" in image_bytes[:12]:
++                ext = "webp"
++            elif image_bytes[:3] in (b"GIF", b"GIF"):
++                ext = "gif"
++            else:
++                ext = "png"
++
++            # Save to /tmp with unique name
++            timestamp = int(time.time())
++            msg_id = update.message.message_id
++            image_path = f"/tmp/telegram_photo_{user_id}_{msg_id}_{timestamp}.{ext}"
++            with open(image_path, "wb") as f:
++                f.write(image_bytes)
++
++            logger.info(
++                "Saved Telegram photo to disk",
++                user_id=user_id,
++                path=image_path,
++                size=len(image_bytes),
++            )
++
++            # Upload to Supabase Storage (fire-and-forget)
++            from datetime import date as _date
++
++            storage_path = f"telegram/{user_id}/{_date.today().isoformat()}/{msg_id}_{timestamp}.{ext}"
++            asyncio.create_task(
++                _upload_to_supabase_storage(
++                    image_bytes, storage_path, _EXT_TO_MIME.get(ext, "image/png")
++                )
++            )
++
++            # Build prompt that tells Claude to view the image via Read tool
++            caption = update.message.caption or ""
++            prompt = (
++                f"A photo was sent via Telegram and saved to: {image_path}\n"
++                f"Use the Read tool to view this image file — you have multimodal vision.\n"
++            )
++            if caption:
++                prompt += f"\nUser's message: {caption}\n"
++            prompt += (
++                "\nAnalyze the image and respond helpfully. "
++                "If the user gave specific instructions in their caption, follow those."
+             )
+ 
+             claude_integration = context.bot_data.get("claude_integration")
+@@ -1059,7 +1321,7 @@
+             heartbeat = self._start_typing_heartbeat(chat)
+             try:
+                 claude_response = await claude_integration.run_command(
+-                    prompt=processed_image.prompt,
++                    prompt=prompt,
+                     working_directory=current_dir,
+                     user_id=user_id,
+                     session_id=session_id,
+@@ -1100,141 +1362,138 @@
+             logger.error(
+                 "Claude photo processing failed", error=str(e), user_id=user_id
+             )
+-
+-    async def _transcribe_voice(self, voice_file_path: str) -> dict:
+-        """Transcribe an audio file using the Whisper transcription script.
+-
+-        Runs /root/scripts/transcribe.py in a subprocess (it uses its own
+-        virtualenv with faster-whisper). Returns parsed JSON result.
+-        """
+-        result = await asyncio.get_event_loop().run_in_executor(
+-            None,
+-            lambda: subprocess.run(
+-                ["/root/whisper-env/bin/python3", "/root/scripts/transcribe.py",
+-                 voice_file_path, "--json"],
+-                capture_output=True,
+-                text=True,
+-                timeout=120,
+-            ),
+-        )
+-        if result.returncode != 0:
+-            raise RuntimeError(
+-                f"Transcription failed: {result.stderr[:300]}"
+-            )
+-
+-        import json as _json
+-        return _json.loads(result.stdout)
++        finally:
++            # Clean up temp file (best effort)
++            if image_path:
++                try:
++                    _os.remove(image_path)
++                except OSError:
++                    pass
+ 
+     async def agentic_voice(
+         self, update: Update, context: ContextTypes.DEFAULT_TYPE
+     ) -> None:
+-        """Transcribe voice/audio message with Whisper, then pass to Claude."""
+-        user_id = update.effective_user.id
++        """Process voice message: transcribe with Whisper, then send to Claude."""
++        import json as _json
++        import subprocess
++        import tempfile
+ 
+-        # Voice messages use update.message.voice, audio files use .audio
+-        voice = update.message.voice or update.message.audio
+-        if not voice:
+-            await update.message.reply_text("Could not process audio.")
+-            return
++        user_id = update.effective_user.id
++        voice = update.message.voice
+ 
+-        duration = voice.duration or 0
+         logger.info(
+             "Agentic voice message",
+             user_id=user_id,
+-            duration=duration,
+-            mime_type=getattr(voice, "mime_type", None),
++            duration=voice.duration,
++            file_size=voice.file_size,
+         )
+ 
+         # Rate limit check
+         rate_limiter = context.bot_data.get("rate_limiter")
+         if rate_limiter:
+-            allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.002)
++            allowed, limit_message = await rate_limiter.check_rate_limit(user_id, 0.001)
+             if not allowed:
+                 await update.message.reply_text(f"⏱️ {limit_message}")
+                 return
+ 
+         chat = update.message.chat
+         await chat.send_action("typing")
+-        progress_msg = await update.message.reply_text("🎤 Transcribing voice message...")
++        progress_msg = await update.message.reply_text("🎙️ Transcribing...")
+ 
+-        tmp_path = None
++        # Download voice file
+         try:
+-            # Download voice file from Telegram
+-            tg_file = await voice.get_file()
+-            suffix = ".oga"  # Telegram voice messages are opus in ogg
+-            if hasattr(voice, "mime_type") and voice.mime_type:
+-                mime_map = {
+-                    "audio/ogg": ".ogg",
+-                    "audio/mpeg": ".mp3",
+-                    "audio/mp4": ".m4a",
+-                    "audio/x-wav": ".wav",
+-                    "audio/wav": ".wav",
+-                }
+-                suffix = mime_map.get(voice.mime_type, suffix)
+-
+-            tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+-            os.close(tmp_fd)
+-            await tg_file.download_to_drive(tmp_path)
+-
+-            # Transcribe with Whisper
+-            transcription = await self._transcribe_voice(tmp_path)
+-            text = transcription.get("text", "").strip()
+-            lang = transcription.get("language", "?")
+-            dur = transcription.get("duration", 0)
++            file = await voice.get_file()
++            with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as tmp:
++                tmp_path = tmp.name
++            await file.download_to_drive(tmp_path)
++        except Exception as e:
++            await progress_msg.edit_text(f"Failed to download voice message: {e}")
++            logger.error("Voice download failed", error=str(e), user_id=user_id)
++            return
++
++        # Transcribe with faster-whisper
++        import os
+ 
+-            if not text:
++        try:
++            result = subprocess.run(
++                ["/root/scripts/transcribe.py", tmp_path, "--json"],
++                capture_output=True,
++                text=True,
++                timeout=120,
++            )
++            if result.returncode != 0:
+                 await progress_msg.edit_text(
+-                    "🎤 Voice message received but no speech was detected."
++                    f"Transcription failed: {result.stderr[:200]}"
++                )
++                logger.error(
++                    "Transcription failed",
++                    stderr=result.stderr[:500],
++                    user_id=user_id,
+                 )
+                 return
+ 
+-            # Show transcription and forward to Claude
+-            await progress_msg.edit_text(
+-                f"🎤 <b>Transcribed</b> ({lang}, {dur:.0f}s):\n\n"
+-                f"<i>{escape_html(text)}</i>\n\n"
+-                f"Processing with Claude...",
+-                parse_mode="HTML",
+-            )
++            transcription = _json.loads(result.stdout)
++            transcript_text = transcription.get("text", "").strip()
++            language = transcription.get("language", "unknown")
++            duration = transcription.get("duration", 0)
+ 
+-            # Caption can add context; prepend it if present
+-            caption = update.message.caption or ""
+-            prompt = f"[Voice message transcription]: {text}"
+-            if caption:
+-                prompt = f"{caption}\n\n{prompt}"
+-
+-            # Pass to Claude (reuse agentic_text logic)
+-            claude_integration = context.bot_data.get("claude_integration")
+-            if not claude_integration:
++            if not transcript_text:
+                 await progress_msg.edit_text(
+-                    "Claude integration not available. Check configuration."
++                    "Could not transcribe any speech from the voice message."
+                 )
+                 return
+ 
+-            current_dir = context.user_data.get(
+-                "current_directory", self.settings.approved_directory
+-            )
+-            session_id = context.user_data.get("claude_session_id")
+-            force_new = bool(context.user_data.get("force_new_session"))
++        except subprocess.TimeoutExpired:
++            await progress_msg.edit_text("Transcription timed out (>120s).")
++            return
++        except Exception as e:
++            await progress_msg.edit_text(f"Transcription error: {e}")
++            logger.error("Transcription error", error=str(e), user_id=user_id)
++            return
++        finally:
++            try:
++                os.unlink(tmp_path)
++            except OSError:
++                pass
+ 
+-            verbose_level = self._get_verbose_level(context)
+-            tool_log: List[Dict[str, Any]] = []
+-            start_time = time.time()
+-            on_stream = self._make_stream_callback(
+-                verbose_level, progress_msg, tool_log, start_time
++        # Show transcript, then send to Claude
++        lang_str = f" [{language}]" if language != "unknown" else ""
++        await progress_msg.edit_text(
++            f'🎙️ "{transcript_text}"{lang_str}\n\nWorking...'
++        )
++
++        # Now process transcript through Claude (same as agentic_text)
++        claude_integration = context.bot_data.get("claude_integration")
++        if not claude_integration:
++            await progress_msg.edit_text(
++                "Claude integration not available. Check configuration."
+             )
++            return
+ 
+-            heartbeat = self._start_typing_heartbeat(chat)
+-            try:
+-                claude_response = await claude_integration.run_command(
+-                    prompt=prompt,
+-                    working_directory=current_dir,
+-                    user_id=user_id,
+-                    session_id=session_id,
+-                    on_stream=on_stream,
+-                    force_new=force_new,
+-                )
+-            finally:
+-                heartbeat.cancel()
++        current_dir = context.user_data.get(
++            "current_directory", self.settings.approved_directory
++        )
++        session_id = context.user_data.get("claude_session_id")
++        force_new = bool(context.user_data.get("force_new_session"))
++
++        verbose_level = self._get_verbose_level(context)
++        tool_log: List[Dict[str, Any]] = []
++        start_time = time.time()
++        on_stream = self._make_stream_callback(
++            verbose_level, progress_msg, tool_log, start_time
++        )
++
++        heartbeat = self._start_typing_heartbeat(chat)
++        success = True
++        try:
++            claude_response = await claude_integration.run_command(
++                prompt=transcript_text,
++                working_directory=current_dir,
++                user_id=user_id,
++                session_id=session_id,
++                on_stream=on_stream,
++                force_new=force_new,
++            )
+ 
+             if force_new:
+                 context.user_data["force_new_session"] = False
+@@ -1247,6 +1506,19 @@
+                 claude_response, context, self.settings, user_id
+             )
+ 
++            storage = context.bot_data.get("storage")
++            if storage:
++                try:
++                    await storage.save_claude_interaction(
++                        user_id=user_id,
++                        session_id=claude_response.session_id,
++                        prompt=f"[voice:{duration:.0f}s] {transcript_text}",
++                        response=claude_response,
++                        ip_address=None,
++                    )
++                except Exception as e:
++                    logger.warning("Failed to log interaction", error=str(e))
++
+             from .utils.formatting import ResponseFormatter
+ 
+             formatter = ResponseFormatter(self.settings)
+@@ -1254,67 +1526,70 @@
+                 claude_response.content
+             )
+ 
+-            await progress_msg.delete()
++        except ClaudeToolValidationError as e:
++            success = False
++            logger.error("Tool validation error", error=str(e), user_id=user_id)
++            from .utils.formatting import FormattedMessage
+ 
+-            for i, message in enumerate(formatted_messages):
+-                if not message.text or not message.text.strip():
+-                    continue
++            formatted_messages = [FormattedMessage(str(e), parse_mode="HTML")]
++
++        except Exception as e:
++            success = False
++            logger.error("Claude integration failed", error=str(e), user_id=user_id)
++            from .handlers.message import _format_error_message
++            from .utils.formatting import FormattedMessage
++
++            formatted_messages = [
++                FormattedMessage(_format_error_message(e), parse_mode="HTML")
++            ]
++        finally:
++            heartbeat.cancel()
++
++        await progress_msg.delete()
++
++        for i, message in enumerate(formatted_messages):
++            if not message.text or not message.text.strip():
++                continue
++            try:
++                await update.message.reply_text(
++                    message.text,
++                    parse_mode=message.parse_mode,
++                    reply_markup=None,
++                    reply_to_message_id=(update.message.message_id if i == 0 else None),
++                )
++                if i < len(formatted_messages) - 1:
++                    await asyncio.sleep(0.5)
++            except Exception as send_err:
++                logger.warning(
++                    "Failed to send HTML response, retrying as plain text",
++                    error=str(send_err),
++                    message_index=i,
++                )
+                 try:
+                     await update.message.reply_text(
+                         message.text,
+-                        parse_mode=message.parse_mode,
+                         reply_markup=None,
+                         reply_to_message_id=(
+                             update.message.message_id if i == 0 else None
+                         ),
+                     )
+-                    if i < len(formatted_messages) - 1:
+-                        await asyncio.sleep(0.5)
+-                except Exception as send_err:
+-                    logger.warning(
+-                        "Failed to send HTML response, retrying as plain text",
+-                        error=str(send_err),
++                except Exception as plain_err:
++                    await update.message.reply_text(
++                        f"Failed to deliver response "
++                        f"(Telegram error: {str(plain_err)[:150]}). "
++                        f"Please try again.",
++                        reply_to_message_id=(
++                            update.message.message_id if i == 0 else None
++                        ),
+                     )
+-                    try:
+-                        await update.message.reply_text(
+-                            message.text,
+-                            reply_markup=None,
+-                            reply_to_message_id=(
+-                                update.message.message_id if i == 0 else None
+-                            ),
+-                        )
+-                    except Exception as plain_err:
+-                        await update.message.reply_text(
+-                            f"Failed to deliver response "
+-                            f"(Telegram error: {str(plain_err)[:150]}). "
+-                            f"Please try again.",
+-                        )
+ 
+-        except Exception as e:
+-            from .handlers.message import _format_error_message
+-
+-            await progress_msg.edit_text(
+-                _format_error_message(e), parse_mode="HTML"
+-            )
+-            logger.error(
+-                "Voice processing failed", error=str(e), user_id=user_id
+-            )
+-        finally:
+-            # Clean up temp file
+-            if tmp_path and os.path.exists(tmp_path):
+-                try:
+-                    os.unlink(tmp_path)
+-                except OSError:
+-                    pass
+-
+-        # Audit log
+         audit_logger = context.bot_data.get("audit_logger")
+         if audit_logger:
+             await audit_logger.log_command(
+                 user_id=user_id,
+                 command="voice_message",
+-                args=[f"duration={duration}s"],
+-                success=True,
++                args=[f"duration={duration:.0f}s", transcript_text[:100]],
++                success=success,
+             )
+ 
+     async def agentic_repo(
