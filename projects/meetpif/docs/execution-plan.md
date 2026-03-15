@@ -19,7 +19,7 @@ These were resolved in the March 7 planning session. Do not revisit without Pavo
 | D2 | Auth model | **Claude OAuth BYOK.** Users connect their Claude subscription via OAuth PKCE flow in MC settings. Tokens stored encrypted in `tenant_claude_credentials`, auto-refreshed within 5 min of expiry. Spawners call `/api/internal/claude-config` for per-tenant config dir. No fallback to shared credentials. _(Updated 2026-03-13)_ |
 | D3 | Google OAuth | **SSO for MC login first.** Workspace scope expansion (Calendar, Gmail, Drive) deferred to Phase 2. |
 | D4 | Supabase | **Single project, tenant isolation.** All instances share Pif's existing Supabase project (ndtlmjekfxaxcowfbrms). Every table gets a `tenant_id` column. RLS policies enforce isolation — each instance only sees its own data. One project to manage, one set of migrations, no project limits. MC API server filters by tenant_id. RLS is defense-in-depth. |
-| D5 | Customization scope | Users customize **soul and memory files** (SOUL.md, USER.md, WORKING.md, ~/life/). Same structure as Pif. No MISSION.md — goals live in WORKING.md and SOUL.md. Everything else comes from the platform. |
+| D5 | Customization scope | Users customize **soul and memory files** (SOUL.md, USER.md, WORKING.md, ~/life/). Same structure as Pif. No MISSION.md — goals live in WORKING.md and SOUL.md. Everything else comes from the platform. Every instance is named "Pif" — no custom naming. _(Updated 2026-03-15)_ |
 | D6 | Scripts & workflows | **Centrally managed.** Users inherit all scripts, workflows, heartbeat logic from the platform. Only the heartbeat **schedule** is per-user. Users cannot create or modify workflows in MVP. |
 | D7 | Codebase access | Users **cannot modify the codebase.** No git access to MC source. No script editing. Platform code is read-only. |
 | D8 | Update propagation | Pavol rebuilds `/opt/assistant-platform/`, restarts services. All instances get updates immediately. No user action required. |
@@ -988,9 +988,11 @@ Replace GOG CLI's separate auth flow with the MC OAuth token. Scripts use the st
 
 ### 2.2 — ~~Onboarding chat~~ **Pulled forward to Phase 0E**
 
-Conversational onboarding chat UI shipped in 0E (2026-03-09, deployed 2026-03-12). Four active steps: Welcome → Naming → Personality → Claude Connect. Background intelligence API runs on signup (email domain scrape, web search). Provisioning step polls provision_queue.
+Conversational onboarding chat UI shipped in 0E (2026-03-09, deployed 2026-03-12). Three active steps: Welcome → Personality → Claude Connect. Background intelligence API runs on signup (email domain scrape, web search). Provisioning step polls provision_queue.
 
-**Implemented and active:** Welcome, Naming, Personality, Claude Connect, Submitting, Provisioning, Provisioned.
+**Decision (2026-03-15):** Naming step removed. Every instance is "Pif" — no custom naming. Simplifies onboarding and brand consistency.
+
+**Implemented and active:** Welcome, Personality, Claude Connect, Submitting, Provisioning, Provisioned.
 **Built but not wired in:** Telegram deep link (builder exists, not in step flow).
 **Designed but not built:** Google Workspace OAuth step, First Task victory lap.
 
@@ -1383,8 +1385,10 @@ Run `454b9796` (failed at test step, code changes complete) — Security hardeni
 - ✅ `APIFY_API_TOKEN` env var set (in `platform.env` + `.pif-env`)
 - ✅ Resend email infrastructure configured (SPF/DKIM/DMARC DNS on Cloudflare)
 
-**Current onboarding flow (4 active steps):**
-1. Welcome → 2. Naming → 3. Personality (timezone, quiet hours, allowed users, LinkedIn) → 4. Claude Connect (OAuth BYOK) → Submitting → Provisioning (polls queue) → Provisioned
+**Current onboarding flow (3 active steps):**
+1. Welcome → 2. Personality (timezone, quiet hours, allowed users, LinkedIn) → 3. Claude Connect (OAuth BYOK) → Submitting → Provisioning (polls queue) → Provisioned
+
+**Note:** Naming step removed (2026-03-15). Every instance is "Pif" — no custom assistant names.
 
 **Remaining (future PRDs):**
 - Google Workspace OAuth step (types defined, no implementation)
