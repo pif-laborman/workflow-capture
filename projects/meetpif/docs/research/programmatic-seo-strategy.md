@@ -1,6 +1,6 @@
 # Programmatic SEO Strategy — meetpif.com/blog
 
-**Author:** Pif | **Date:** 2026-03-15 | **Status:** Draft v4
+**Author:** Pif | **Date:** 2026-03-15 | **Status:** Draft v5
 
 ---
 
@@ -474,12 +474,29 @@ Day 30:  Full analysis — keep / update / consolidate.
          If not page 1-3: re-run competitor analysis, update content.
 ```
 
+**Engagement metrics (track from Day 1):**
+- Bounce rate per article (target: <70%)
+- Average time on page (target: >2 min for 10-min-read articles)
+- Scroll depth (via simple analytics event)
+- If engagement is poor → content problem, not SEO problem. Rewrite, don't re-optimize.
+
+**Pruning rules (kill threshold):**
+- Day 30: Ranking >50 and <10 impressions → flag for review
+- Day 60: Still no improvement after update → noindex or redirect to category hub
+- Day 90: Zero organic clicks → delete or merge into related article
+- Quarterly: audit entire blog, prune bottom 10%. A smaller, high-quality index outperforms a bloated one (G2 lost 80% traffic from keeping low-performing pSEO pages indexed).
+
 **Monthly optimization cycle:**
 - Re-analyze underperforming articles (ranking >30 after 30 days)
 - Fetch updated competitor content — have they improved?
 - Add missing sections, update stats, increase word count
 - Resubmit to GSC after update
 - Track: which categories perform best? Adjust publishing priority.
+
+**AI search (GEO) monitoring:**
+- Track LLM referral traffic (ChatGPT, Perplexity, Gemini) — Backlinko reports 800% YoY growth in LLM referrals. Semrush predicts LLM traffic overtakes Google by end of 2027.
+- Check monthly: are our articles cited in AI answers for target queries?
+- Track "AI share of voice" alongside traditional SERP rankings.
 
 ---
 
@@ -519,6 +536,40 @@ Each article generates multiple distribution assets:
 - **Email snippet**: Summary + CTA for newsletter
 - Automated via Antfarm content-factory workflow.
 
+### AI Search Optimization (GEO)
+AI search is the biggest SEO shift of 2026. Structure content so LLMs can extract and cite it:
+- **Direct-answer paragraphs** at the top of each H2 section (40-60 words LLMs can pull as citations)
+- **Structured Q&A format** throughout — not just the FAQ section
+- **Schema markup**: `FAQPage` JSON-LD on every article (already planned, prioritize implementation)
+- **Multi-source presence**: LLMs compose answers from diverse sources. Being present across the web (forums, GitHub, expert platforms) matters as much as the blog itself.
+- **Brand recognition**: AI systems favor recognized, authoritative brands when selecting sources. Every backlink, mention, and citation feeds this.
+
+### Per-Article Differentiation Checklist
+Programmatic SEO fails when pages are interchangeable. Before publishing, every article must pass:
+- [ ] Section 2 capabilities are unique to this tool (not generic "automate tasks")
+- [ ] Code blocks reference this tool's actual API endpoints, auth, and data structures
+- [ ] ROI numbers reflect this tool's actual pricing and time savings
+- [ ] Tradeoffs are specific to this integration (not generic AI limitations)
+- [ ] At least 1 section couldn't appear in any other article in the blog
+- [ ] Conditional content: CTA, examples, and recommendations match the tool's actual use case (not one-size-fits-all)
+
+### Proprietary Data Layer (Build Over Time)
+Backlinko's analysis: every winning pSEO site (Wise, Tripadvisor, Zapier) has proprietary data. The losers (G2, ZoomInfo) relied on templates without defensible data moats and lost 80%+ traffic in spam updates.
+
+Our current data sources are public (tool APIs, Reddit threads). The template is strong, but not a moat. Build proprietary data as Pif gets users:
+- **v1 (now):** "We tested [tool]'s API" — real benchmarks (response times, rate limits, data freshness)
+- **v2 (with users):** Anonymized Pif usage data — "Pif manages X calendar events/month across Y users"
+- **v3 (with scale):** User survey data, cross-tool benchmarks, "State of AI Assistants" annual report
+- This is the long game. Start collecting data from Day 1, even if it's small.
+
+### Backlink Strategy — Beyond Outreach
+The 2020 playbook (search for resource pages, send emails) works but slowly. Higher-leverage strategies for 2026:
+- **Original research/benchmarks** — publish data that journalists and bloggers cite (compounds with Proprietary Data Layer above)
+- **Expert sourcing platforms** (Featured, HARO, Connectively) — get Pavol/Pif quoted in articles
+- **Embeddable assets** — comparison tables, workflow diagrams that other sites want to embed with attribution
+- **Open-source community contributions** — genuine expertise in tool communities (GitHub, Discord) builds natural citations
+- **LLM Seeding** — build presence in sources that LLMs draw from (forums, docs, expert databases)
+
 ### Backlink Outreach (Weekly)
 - Search for "[topic] resources" and "[topic] statistics" pages
 - Identify sites that link out to similar content
@@ -554,6 +605,13 @@ Each article generates multiple distribution assets:
 - Articles ranking page 1-2 within 2 weeks = excellent
 - Organic traffic growing 20%+ monthly by month 2
 
+**Diversification targets (avoid boom-bust):**
+- Newsletter subscriber conversion rate: 2-5% of blog visitors
+- Direct/branded search growing month-over-month (not just long-tail organic)
+- Blog is one channel, not the only channel — social, email, and community presence must grow in parallel
+- LLM referral traffic tracked separately from organic (new metric for 2026)
+- By Month 3: no single article >15% of total blog traffic (healthy distribution)
+
 ---
 
-*Strategy v4 by Pif, 2026-03-15. Task: dc1a1016. Incorporates OpenClaw SEO Content Automation Guide.*
+*Strategy v5 by Pif, 2026-03-15. Task: dc1a1016. Incorporates OpenClaw SEO Content Automation Guide + Backlinko/Neil Patel research (GEO, pruning, proprietary data moat, differentiation checklist, diversification targets).*
