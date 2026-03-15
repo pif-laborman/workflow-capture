@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import requests
@@ -628,7 +629,7 @@ def run_command(schedule_id: str, command: str):
 def check_schedules():
     """Check Supabase schedules and run any that are due."""
     schedules = sb_select("schedules", {"enabled": "eq.true"})
-    now = datetime.now(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
 
     for sched in schedules:
         last_run = sched.get("last_run_at")
@@ -636,14 +637,21 @@ def check_schedules():
         workflow_id = sched.get("workflow_id") or ""
         command = sched.get("command") or ""
         sched_id = sched.get("id", "unknown")
+        sched_tz = sched.get("timezone") or "UTC"
 
         if not cron_expr or (not workflow_id and not command):
             continue
 
+        # Convert current time to the schedule's timezone for cron evaluation
+        try:
+            now = now_utc.astimezone(ZoneInfo(sched_tz))
+        except (KeyError, Exception):
+            now = now_utc  # Fall back to UTC if timezone is invalid
+
         # Simple cron check: parse cron and see if we're within the minute
         if should_run_now(cron_expr, last_run, now):
             sb_update("schedules", {"id": sched_id}, {
-                "last_run_at": now.isoformat(),
+                "last_run_at": now_utc.isoformat(),
             })
             if workflow_id:
                 print(f"Schedule due: {workflow_id}")
