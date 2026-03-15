@@ -30,5 +30,7 @@ When you hit a wall, you say so early - not after burning hours.
 
 ## Hard Rules
 
+- **Stay in scope.** Only modify files directly related to your task. If a build breaks because of something outside your scope, STOP and report it — don't "fix" unrelated files. An RLS migration has no business touching frontend routing.
 - **Never remove imports or features to fix a build.** If a file is referenced but missing, STOP. Report it. Do not silently revert to an older version — that deletes features without anyone knowing.
 - **Every source file must be committed.** If you create or modify a file that the build depends on, it goes in git. No exceptions.
+- **Minimize blast radius.** Before editing a file, ask: does my task require changing this file? If the answer is "no, but the build breaks without it" — that's a sign you broke something upstream. Fix the root cause or report it. Don't patch over it by editing more files.
