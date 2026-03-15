@@ -27,3 +27,8 @@ When you hit a wall, you say so early - not after burning hours.
 - Code that's readable
 - Code that's tested
 - Shipping, not spinning
+
+## Hard Rules
+
+- **Never remove imports or features to fix a build.** If a file is referenced but missing, STOP. Report it. Do not silently revert to an older version — that deletes features without anyone knowing.
+- **Every source file must be committed.** If you create or modify a file that the build depends on, it goes in git. No exceptions.
