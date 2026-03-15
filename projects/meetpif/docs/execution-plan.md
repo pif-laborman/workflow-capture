@@ -1,7 +1,8 @@
 # Meetpif — Execution Plan
 
 **Created**: 2026-03-07
-**Status**: Active — working document. Update as phases complete.
+**Last updated**: 2026-03-15
+**Status**: Active — Phases 0A-0E complete + deployed. Phase 3 (monetization) partially shipped. Phase 1 (first tenant) next.
 **Companion**: `spec.md` (product spec), `competitive-landscape.md` (market context)
 
 This is the operational map. Every task, every decision, every dependency. We work through this linearly and update it as we go.
@@ -987,7 +988,13 @@ Replace GOG CLI's separate auth flow with the MC OAuth token. Scripts use the st
 
 ### 2.2 — ~~Onboarding chat~~ **Pulled forward to Phase 0E**
 
-Conversational onboarding chat UI shipped in 0E (2026-03-09). Steps 1-3 (Welcome, Naming, Personality) and background intelligence API implemented. Remaining steps (4-7: Google Workspace, Telegram deep link, Provisioning, First Task) to be added as future PRDs.
+Conversational onboarding chat UI shipped in 0E (2026-03-09, deployed 2026-03-12). Four active steps: Welcome → Naming → Personality → Claude Connect. Background intelligence API runs on signup (email domain scrape, web search). Provisioning step polls provision_queue.
+
+**Implemented and active:** Welcome, Naming, Personality, Claude Connect, Submitting, Provisioning, Provisioned.
+**Built but not wired in:** Telegram deep link (builder exists, not in step flow).
+**Designed but not built:** Google Workspace OAuth step, First Task victory lap.
+
+Remaining steps to be added as future PRDs.
 
 ### 2.3 — Instance health dashboard
 
@@ -1023,54 +1030,107 @@ When Pavol runs `update-platform.sh`, each instance's Telegram bot sends a notif
 
 **Goal**: Turn Pif into a product others can pay for.
 
-### 3.1 — Pricing tiers (from spec Section 16)
+### 3.1 — Pricing tiers ✅ LIVE
 
-| Tier | Price | What |
-|------|-------|------|
-| Starter | Free | Templates + docs. BYOS (Docker). Community support. |
-| Managed | $49/mo | Pif deploys + maintains on shared infra. Monitoring, updates, support. |
-| Dedicated | $99/mo | Own VPS. Pif deploys, user owns. Priority support. |
+Three tiers live on meetpif.com/pricing (landing page `#pricing` section):
 
-### 3.2 — Stripe integration
+| Tier | Price | What | Status |
+|------|-------|------|--------|
+| **Free** | $0 forever | Full feature set — limited to 3 active projects | **Live** |
+| **Pro** | $49/mo | Unlimited projects, custom workflows, premium skills, priority processing | **Live** — Stripe recurring (`price_1TBIeGGp8OVrqEscO8szEgov`) |
+| **Custom** | $500/mo + $2K setup | Done-for-you AI ops, dedicated team, monthly improvements | **Live on landing page** — `/custom` DFY page built, no automated checkout (sales-led) |
 
-Payment processing for Managed/Dedicated tiers. Webhook triggers provisioner on successful subscription.
+**Backend enforcement** (`mc/server/src/utils/tiers.ts`):
 
-### 3.3 — Public activity feed
+| Resource | Free | Pro | Enterprise |
+|----------|------|-----|-----------|
+| Schedules | 5 | 25 | 100 |
+| Projects | 5 | 25 | 100 |
+| Agents | 2 | 10 | 50 |
+| Recordings/month | 10 | 100 | 1,000 |
+| Custom Branding | ✗ | ✓ | ✓ |
+| Antfarm Workflows | ✗ | ✓ | ✓ |
+| Webhook Channels | ✗ | ✓ | ✓ |
 
-Opt-in `/live` route on MC showing sanitized activity feed. Marketing tool for prospective users.
+Each tenant has a `tier` column. API enforces via `assertWithinLimit()` on CREATE endpoints.
 
-### 3.4 — Landing page
+### 3.2 — Stripe integration ✅ LIVE
 
-`meetpif.com` or `meetpif.com/rif` — product landing page. "Your AI chief of staff you actually own."
+Stripe checkout working for both:
+- **Pro subscription** — $49/mo recurring via Stripe Checkout
+- **Marketplace purchases** — $9 one-time per skill via Stripe Checkout + webhook delivery
 
-### 3.5 — Polsia migration page
+### 3.3 — Marketplace ✅ LIVE (PR #11, merged 2026-03-15)
 
-`/from-polsia` — revenue share calculator, side-by-side comparison, migration guide.
+**Routes:** `/marketplace` (listing), `/marketplace/{slug}` (detail), `/marketplace/{slug}/checkout` (upsell interstitial)
+
+**Model:** 14 library skills seeded as marketplace products. Two purchase options:
+- **Single skill:** $9 one-time
+- **Pro subscription:** $49/mo (all skills + future premium)
+
+**Backend:** Full Stripe Checkout → webhook → Resend email delivery pipeline:
+- `POST /api/marketplace/products/:slug/checkout` — creates Stripe sessions
+- `POST /api/marketplace/webhook` — records purchases, sends delivery emails
+- `marketplace_products` + `product_purchases` tables (migration in PR #11)
+
+**Known bugs (documented in `marketplace-post-merge-fixes.md`):**
+1. Webhook idempotency — duplicate purchases on Stripe retry (HIGH)
+2. Pro plan pricing — both plans use per-skill price_id (HIGH)
+3. Purchase status — marked completed before email delivery (HIGH)
+4. Empty buyer email guard missing (MEDIUM)
+5. Env var startup validation missing (MEDIUM)
+
+These must be fixed before driving real traffic to marketplace.
+
+### 3.4 — Landing page ✅ LIVE
+
+meetpif.com — full product landing page with:
+- Hero + conversational demo
+- Pricing section (3 tiers)
+- FAQ with personality
+- `/custom` DFY page
+- Rich content blog with SEO templates (programmatic SEO)
+- Legal pages (Terms of Service, Privacy Policy — shipped 2026-03-15)
+
+### 3.5 — Public activity feed
+
+Opt-in `/live` route on MC showing sanitized activity feed. Marketing tool for prospective users. **Not yet built.**
 
 ### 3.6 — Product Hunt launch
 
-After 3+ successful deployments with real testimonials.
+After 3+ successful deployments with real testimonials. **Not yet started.**
 
-### 3.7 — $1M Challenge dashboard
+### 3.7 — Launch funnel (from launch-playbook.md)
 
-Public build tracking Pif building a real SaaS (Rekon). Revenue counter, commit history, task feed.
+The full acquisition funnel documented in `launch-playbook.md` but **not yet built**:
+
+```
+"Talk to Pif" (free assessment chat) → Get Results (email capture)
+  → Guide Checkout ($29 BYOCOS Guide) → Pif Platform ($49/mo)
+```
+
+Components needed: conversational assessment widget, $29 guide checkout, 3 email sequences (no-buy nurture, guide-only upsell, onboarding), monthly value reports. This is the primary launch acquisition engine — currently the only path is direct signup.
 
 ---
 
 ## Execution Order & Dependencies
 
 ```
-Phase 0A (Platform Foundation)
-    └──→ Phase 0B (MC Refactoring)
-              └──→ Phase 0C (Instance Provisioner)
-                        ├──→ Phase 0D (Open Registration) [parallel]
-                        │         └──→ Phase 0E (Onboarding Overhaul)
-                        └──→ Phase 1 (Deploy Pif)
+Phase 0A (Platform Foundation)          ✅ Complete
+    └──→ Phase 0B (MC Refactoring)      ✅ Deployed
+              └──→ Phase 0C (Provisioner)    ✅ Deployed (watcher daemon running)
+                        ├──→ Phase 0D (Open Registration)  ✅ Deployed
+                        │         └──→ Phase 0E (Onboarding)  ✅ Deployed
+                        ├──→ Phase 3 (Monetization)  ⚡ Partially deployed
+                        │         ├── Pricing tiers  ✅
+                        │         ├── Marketplace     ✅ (has known bugs)
+                        │         ├── Stripe checkout ✅
+                        │         └── Launch funnel   ⬚ Not started
+                        └──→ Phase 1 (Deploy First Tenant)  ← YOU ARE HERE
                                   └──→ Phase 2 (Scale & Polish)
-                                            └──→ Phase 3 (Monetization)
 ```
 
-**Critical path**: 0A → 0B → 0C → 1. 0D/0E run in parallel and feed into Phase 1.
+**Critical path**: 0A → 0B → 0C → **1 (next)**. Phase 3 monetization was pulled forward and partially shipped alongside 0D/0E. Phase 1 is gated on Pavol facilitating the first tenant deployment.
 
 ---
 
@@ -1172,12 +1232,12 @@ Update this section as phases complete.
 |-------|--------|---------|-----------|-------|
 | 0A | **Complete** | 2026-03-07 | 2026-03-07 | US-002→US-009. 269 tests. Platform at `/opt/assistant-platform/` fully operational. |
 | 0B | **Deployed** | 2026-03-07 | 2026-03-08 | PR #13 merged, deployed to meetpif.com, migrations 001-005 + 007 applied + backfilled. Google SSO working. See notes below. |
-| 0C | **Merged to main** | 2026-03-08 | 2026-03-08 | Antfarm run completed 12 stories. Reviewer fixes applied. Merged to main. Provisioner + deprovision scripts ready. |
+| 0C | **Deployed** | 2026-03-08 | 2026-03-08 | Antfarm run completed 12 stories. Provisioner + deprovision scripts ready. `provision-watcher.service` running since 2026-03-11 (polls queue every 30s). |
 | 0D (Open Reg) | **Deployed** | 2026-03-08 | 2026-03-08 | Open registration + onboarding wizard + security hardening. Merged to main. Migrations 008-009 applied. Provision watcher daemon running. See notes below. |
-| 0E (Onboarding) | **Merged** | 2026-03-09 | 2026-03-09 | Conversational onboarding replacing wizard. 3 PRDs (Chat UI, Steps 1-3, Background Intel). All merged to assistant-platform main. Migration 010 ready. See notes below. |
-| 1 | **Ready** | — | — | All prerequisites met. Claude OAuth BYOK deployed (2026-03-13). Migrations 001-005, 007-018 applied. Can provision first real instance. |
-| 2 | Not started | — | — | Phase 2.2 (onboarding chat) pulled forward into 0E. |
-| 3 | Not started | — | — | |
+| 0E (Onboarding) | **Deployed** | 2026-03-09 | 2026-03-12 | Conversational onboarding (4 steps: Welcome → Naming → Personality → Claude Connect). Background intel API. Migration 010 applied. Apify token set. See notes below. |
+| 1 | **Ready** | — | — | All prerequisites met. Claude OAuth BYOK deployed (2026-03-13). Migrations 001-005, 007-019 applied. Automated provisioner running. Can provision first real instance. |
+| 2 | Partially started | — | — | Phase 2.2 (onboarding chat) pulled forward into 0E. |
+| 3 | **Partially deployed** | 2026-03-14 | — | Pricing live on meetpif.com (Free/$49 Pro/$500 Custom). Marketplace live (PR #11). Tier enforcement in backend. Stripe checkout working. See notes below. |
 
 ### 0B deployment notes (2026-03-08)
 
@@ -1318,11 +1378,18 @@ Run `454b9796` (failed at test step, code changes complete) — Security hardeni
 - PRD 3 required manual adaptation: path remapping (`server/` → `mc/server/`), preserving the superior auto-registration flow from 0D, skipping `google-oauth.test.ts` changes (assistant-platform already had correct auto-register test assertions)
 - All three antfarm branches forked from the same mission-control commit (`b0783c0`), causing overlapping file conflicts between PRDs — resolved during merge
 
-**Not yet applied:**
-- ~~Migration 010 not yet run against Supabase~~ → **Applied 2026-03-12**
-- ~~`APIFY_API_TOKEN` env var not yet set on the server~~ → **Set 2026-03-12** (in `platform.env` + `.pif-env`)
-- ~~Resend email infrastructure (SPF/DKIM/DMARC DNS records on Cloudflare) not yet configured~~ → **Done**
-- Steps 4-7 of onboarding flow (Google Workspace, Telegram deep link, Provisioning, First Task) — future PRDs
+**Infrastructure applied (2026-03-12):**
+- ✅ Migration 010 applied (background_intel columns on tenants)
+- ✅ `APIFY_API_TOKEN` env var set (in `platform.env` + `.pif-env`)
+- ✅ Resend email infrastructure configured (SPF/DKIM/DMARC DNS on Cloudflare)
+
+**Current onboarding flow (4 active steps):**
+1. Welcome → 2. Naming → 3. Personality (timezone, quiet hours, allowed users, LinkedIn) → 4. Claude Connect (OAuth BYOK) → Submitting → Provisioning (polls queue) → Provisioned
+
+**Remaining (future PRDs):**
+- Google Workspace OAuth step (types defined, no implementation)
+- Telegram deep link step (builder exists, not wired into flow)
+- First Task victory lap (spec only)
 
 **Review suggestions (non-blocking, from antfarm run #36 reviewer):**
 1. Move Apify token from query string to Authorization header
@@ -1430,3 +1497,53 @@ Run `454b9796` (failed at test step, code changes complete) — Security hardeni
 
 **Build files restored:**
 - `mc/mc/index.html`, `vite.config.ts`, `package.json`, `tsconfig.json`, `tsconfig.app.json` were missing from `mc/mc/` after source consolidation. Restored from antfarm snapshot. `mc/mc/src` symlink → `../src` recreated.
+
+### PR #8 — Tenant self-service schedules (2026-03-15)
+
+**Merged + deployed.** Tenants can manage their own workflow schedules via MC settings:
+- Per-tenant timezone support for schedule execution
+- CRUD endpoints for schedule management scoped by tenant_id
+
+### PR #9 — MC server modularization (2026-03-15)
+
+**Merged + deployed** (antfarm run, `feat/modularize-server-routes`):
+- Monolith `index.ts` (5,147 lines) → 13 route modules + 5 utility modules + thin `index.ts` (~200 lines)
+- **Route modules:** `auth.ts`, `tasks.ts`, `projects.ts`, `comments.ts`, `logins.ts`, `recordings.ts`, `workflows.ts`, `activity.ts`, `onboarding.ts`, `filesystem.ts`, `schedules.ts`, `branding.ts`, `misc.ts`
+- **Utility modules:** `jwt.ts`, `streaming.ts`, `background-intel.ts`, `filesystem.ts`, `helpers.ts`
+- 3 new deps: `js-yaml`, `nanoid`, `cron-parser`
+- esbuild command updated with new externals
+
+### Monetization & marketplace (2026-03-14 — 2026-03-15)
+
+**Tier-based feature gating deployed:**
+- `mc/server/src/utils/tiers.ts` — 4 tiers (admin, free, pro, enterprise) with resource limits
+- `assertWithinLimit()` enforcement on all CREATE endpoints
+- Tenant `tier` column used for gating
+
+**Landing page v4 restored + pricing shipped:**
+- Free / Pro / Custom pricing section on meetpif.com
+- `/custom` DFY landing page with $500/mo + $2K setup positioning
+- `/pricing` anchor on landing page
+
+**PR #11 — Marketplace (antfarm run, `feat/marketplace`, merged 2026-03-15):**
+- 9 user stories (US-001 through US-009)
+- Migration: `marketplace_products` + `product_purchases` tables
+- 14 library skills seeded as products ($9 each)
+- Stripe Checkout integration (one-time + subscription modes)
+- Webhook handler for purchase recording + Resend email delivery
+- Frontend: listing page, product detail page, checkout upsell interstitial
+- Navigation + footer links + SEO metadata
+- Post-merge: copy improvements, Stripe flow fixes
+- **Known bugs:** 5 issues in `marketplace-post-merge-fixes.md` — must be fixed before production traffic
+
+**Legal pages (2026-03-15):**
+- Terms of Service + Privacy Policy with GDPR compliance
+- Contact email: legal@meetpif.com
+
+**Blog & SEO (2026-03-14 — 2026-03-15):**
+- Rich content blog support with programmatic SEO templates
+- Byline, progress bar, tags, related posts grid, sticky sidebar CTA
+- First SEO article published
+
+**Vault key persistence (2026-03-15):**
+- Auth: vault key persisted in localStorage, passed via OAuth hash fragment
