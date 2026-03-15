@@ -210,6 +210,11 @@ steps:
       echo "=== FAILED STEPS ==="
       sb_get "steps?status=eq.failed&select=id,step_id,run_id,agent,started_at&order=started_at.desc&limit=5" || echo "No failed steps"
     expects: "exit 0"
+    on_fail:
+      retry_step: gather
+      max_retries: 2
+      on_exhausted:
+        notify: telegram
 
   - id: summarize
     agent: claude
@@ -260,6 +265,11 @@ steps:
       First line of your reply MUST be: STATUS: done
       Then the formatted brief on subsequent lines.
     expects: "STATUS: done"
+    on_fail:
+      retry_step: summarize
+      max_retries: 2
+      on_exhausted:
+        notify: telegram
 
   - id: deliver
     agent: bash
@@ -273,3 +283,8 @@ steps:
       ${BRIEF}"
       rm -f /tmp/pif-morning-msg.txt
     expects: "exit 0"
+    on_fail:
+      retry_step: deliver
+      max_retries: 2
+      on_exhausted:
+        notify: telegram

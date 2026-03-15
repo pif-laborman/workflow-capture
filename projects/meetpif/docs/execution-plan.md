@@ -1386,3 +1386,47 @@ Run `454b9796` (failed at test step, code changes complete) — Security hardeni
 
 **Risk register update:**
 - "Claude OAuth token expires silently" → now mitigated by `refreshTenantTokensIfNeeded()` auto-refresh (5-min threshold) in addition to per-instance timer + alert.
+
+### Multi-tenant Telegram bot (2026-03-14)
+
+**PR #7 merged and deployed** (antfarm run #45, `feat/multi-tenant-telegram-bot`):
+
+**Migration 019 — Telegram linking schema:**
+- `telegram_user_id BIGINT UNIQUE` column on `tenants` (nullable, indexed)
+- `telegram_linking_tokens` table — single-use deep link tokens, 1-hour expiry
+- RLS + `service_role_full_access` policy on linking tokens
+
+**API endpoints (mc/server/src/index.ts):**
+- `POST /api/internal/telegram/verify` — bot→server token validation (MC_API_TOKEN auth, pre-authMiddleware)
+- `POST /api/telegram/link` — generate deep link token (rate-limited: 5/hr per tenant, in-memory)
+- `GET /api/telegram/status` — check Telegram connection status
+- `POST /api/telegram/disconnect` — clear Telegram link
+
+**Frontend (mc/src/components/sections/SettingsSection.tsx):**
+- Telegram card added to Settings — connect, disconnect, deep link flow
+- Note: PR wrote to `src/` instead of `mc/src/` (same antfarm path issue as PR #6). Manually merged Telegram card into canonical `mc/src/` SettingsSection.
+
+**Python bot service (`services/meetpif-telegram/`):**
+- `bot.py` — main entry, message routing, typing indicators
+- `routing.py` — tenant lookup by `telegram_user_id` via Supabase
+- `session_pool.py` — Claude CLI subprocess pool (stdin/stdout, 2s silence heuristic)
+- `start_handler.py` — `/start` deep link account linking
+- `unknown_handler.py` — unrecognized users
+- Full test suite across all modules
+
+**Infrastructure:**
+- Bot: `@meetpif_bot` — token stored in logins table (`pif-creds get "MeetPif Telegram Bot"`)
+- Service: `meetpif-telegram.service` (systemd, active, polling)
+- Service user: `meetpif-telegram` (system user, no shell)
+- State dir: `/var/lib/meetpif-telegram/` (for Claude session config)
+- Env: `/etc/meetpif-telegram.env` (chmod 600)
+
+**Security fixes applied before merge:**
+1. Nginx: `location /api/internal/ { return 404; }` — blocks internal endpoints from internet (also fixes pre-existing exposure from PR #6's `/api/internal/claude-config`)
+2. Systemd: replaced `DynamicUser=yes` with dedicated `meetpif-telegram` user + `ReadWritePaths=/var/lib/meetpif-telegram`
+
+**Known limitation (v1):**
+- Session pool uses raw stdin/stdout to Claude CLI with 2-second silence heuristic. Fragile for long/bursty responses. Future fix: `claude --output-format stream-json` or structured IPC.
+
+**Build files restored:**
+- `mc/mc/index.html`, `vite.config.ts`, `package.json`, `tsconfig.json`, `tsconfig.app.json` were missing from `mc/mc/` after source consolidation. Restored from antfarm snapshot. `mc/mc/src` symlink → `../src` recreated.

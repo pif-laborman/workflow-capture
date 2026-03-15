@@ -32,6 +32,21 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 
 **Convention for new credentials:** Always store in the logins table via Mission Control UI. Scripts fetch at startup with `pif-creds get`. Never add secrets to `.pif-env` or systemd unit files.
 
+**Python subprocess trap:** When a Python script resolves a key into a variable (`KEY = pif-creds ...`), subprocess children don't inherit it. Always `os.environ["PIF_SUPABASE_SERVICE_ROLE_KEY"] = KEY` immediately after resolving. Bash `export` does this automatically; Python does not. This has caused dispatch failures twice.
+
+## Quick Reference — Pavol's Calendar & Email
+
+> **"my calendar" / "my meetings" / "my email"** → always means `pavol.dzurjanin@duvo.ai`
+>
+> ```bash
+> source ~/.pif-env
+> export GOG_KEYRING_PASSWORD=$(pif-creds get "GOG (Google Workspace CLI)")
+> export GOG_ACCOUNT=pif.laborman@gmail.com
+> gog cal list --account pavol.dzurjanin@duvo.ai    # calendar
+> gog gmail list --account pavol.dzurjanin@duvo.ai   # email
+> ```
+> Scopes: gmail.readonly, calendar.readonly. No derivation needed — just use the snippet above.
+
 ## External Services
 
 ### Supabase (primary database)
@@ -39,11 +54,24 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 - **Tables:** runs, steps, events, heartbeats, policies, schedules, triggers, tasks, messages
 - **Access:** curl, Python, MCP server
 - **MCP:** Configured in `~/.mcp.json` (HTTP, bearer token auth)
+- **Schema rename:** `~/scripts/rename-schema.sh <old> <new> [test-table]` — atomic rename with PostgREST reconfiguration:
+  1. `ALTER SCHEMA old RENAME TO new`
+  2. Update `pgrst.db_schemas` (ALTER ROLE + Management API)
+  3. `NOTIFY pgrst, 'reload config'`
+  4. Smoke test (REST GET on test-table)
+  5. Telegram confirmation
+  Never do these steps manually — the kiddlo→bobli rename broke prod because step 2 was missed.
 
 ### Telegram Bot
 - **Bot:** @pif_laborman_bot
 - **Service:** `claude-telegram.service` (systemd, always running)
 - **Send script:** `~/scripts/telegram-send.sh`
+- **Package:** `claude-code-telegram` v1.3.0 (installed via `uv tool` from git, pinned to rev)
+- **Patches:** 7 local patches in `~/scripts/patches/` (tilde path support, truthiness fix, system prompt, tool summaries, etc.)
+- **NEVER run `uv tool upgrade claude-code-telegram` or `uv tool upgrade --all`** — this will overwrite patches and may break the service
+- **To upgrade:** `bash ~/scripts/upgrade-telegram-bot.sh v1.X.0` (installs, re-applies patches, restarts, verifies)
+- **To check patch health:** `bash ~/scripts/apply-patches.sh --check`
+- **Heartbeat auto-detects** missing patches and re-applies them
 
 ### GitHub
 - **Account:** pif-laborman
@@ -85,6 +113,16 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 - **Origin CA Key:** `$CLOUDFLARE_ORIGIN_CA_KEY` — for generating Origin CA certificates
 - **SSL:** Full (Strict), Origin CA cert expires 2041
 - **Features enabled:** Always HTTPS, min TLS 1.2, HSTS, Brotli
+- **Global API Key auth:** Use `X-Auth-Email: pif.laborman@gmail.com` + `X-Auth-Key` headers (for DNS writes; Bearer token is read-only)
+
+### Resend (transactional email)
+- **Domain:** meetpif.com (verified, eu-west-1)
+- **Capabilities:** sending + receiving
+- **API Key:** stored in logins table (`pif-creds get "Resend"`)
+- **Inbound email:** MX record → Resend → webhook → forward to pif.laborman@gmail.com
+- **Webhook:** `https://meetpif.com/webhook/resend` (Resend ID: `36bf779b-fe27-4587-a5c0-52253c024527`)
+- **Webhook signing secret:** `whsec_oDgojtFXVXHHtBxbxkAM+ixkWVqLOg5S`
+- **Service:** `resend-webhook.service` (port 8092, proxied via nginx)
 
 ### HubSpot (duvo.ai CRM)
 - **Portal:** 146757926 (EU datacenter)
@@ -112,9 +150,60 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 - **Scopes:** channels:read, channels:history, groups:read, groups:history, users:read, im:history
 - **Access:** Read-only. Can see 50+ public channels.
 
+### Duvo API (duvo.ai product API)
+- **Base URL:** `https://api.duvo.ai/v1`
+- **Auth:** Bearer token (`Authorization: Bearer <key>`)
+- **Credential:** `pif-creds get "duvo.ai API"` (note: exact name is `duvo.ai API`, not `Duvo API`)
+- **User:** pavol.dzurjanin@duvo.ai
+- **Purpose:** duvo.ai product/retail API — used for integrations, data access
+- **Note:** Public API key. No MCP integration (direct HTTP calls).
+
+### Stripe (payments & billing)
+- **Account:** Pavol's Stripe (acct_1NYrlr...)
+- **Key:** Restricted key `rk_live_...` — stored in logins table (`pif-creds get "Stripe"`)
+- **MCP:** `@stripe/mcp` configured in `~/.mcp.json`
+- **Permissions:** Read & Write on Products, Prices, Customers, Subscriptions, Invoices, Payment Links, Checkout Sessions
+- **Tools:** create/list products, prices, customers, subscriptions, invoices, payment links, coupons, refunds, balance, docs search
+- **Limits:** List endpoints cap at 100 objects per call. No webhook management.
+
+### Adding New MCP Integrations
+
+Follow the checklist: `~/memory/research/mcp-integration-checklist.md`
+
+Standard flow: get token → store in logins table → add to `~/.mcp.json` → restart session → test → update TOOLS.md.
+
 ### Healthchecks.io
 - **Ping URL:** `$PIF_UPTIME_PING_URL`
 - **Script:** `~/scripts/pif-heartbeat.sh`
+
+## Voice / TTS
+
+**Liam voice** — Pif's audio voice for all Telegram voice memos.
+
+- **Reference audio:** `/tmp/pif-young-british/1_liam.mp3` (British ElevenLabs preview, 3.1s)
+- **Reference transcript:** `"A man who doesn't trust himself can never really trust anyone else."`
+- **Model:** Qwen3-TTS 1.7B on HuggingFace Spaces (`Qwen/Qwen3-TTS`)
+- **API endpoint:** `/generate_voice_clone`
+- **Output → Telegram:** Convert WAV → OGG (libopus 48k) → `sendVoice`
+
+**Quick snippet:**
+```python
+from gradio_client import Client, handle_file
+client = Client("Qwen/Qwen3-TTS")
+audio_path, status = client.predict(
+    ref_audio=handle_file("/tmp/pif-young-british/1_liam.mp3"),
+    ref_text="A man who doesn't trust himself can never really trust anyone else.",
+    target_text="<your text here>",
+    language="Auto",
+    use_xvector_only=False,
+    model_size="1.7B",
+    api_name="/generate_voice_clone"
+)
+# then: ffmpeg -y -i audio_path -c:a libopus -b:a 48k output.ogg
+# then: curl sendVoice to Telegram
+```
+
+**Note:** gradio_client is already installed system-wide. Rate-limited by HuggingFace ZeroGPU queue — production calls may queue 30-60s.
 
 ## CLI Tools
 
@@ -163,16 +252,18 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 | "research X" | `content-research` |
 
 **Antfarm workflows:** feature-dev, bug-fix, security-audit, content-factory, infra-build
-- Command: `antfarm workflow run <workflow> "task" --repo /path`
+- Command: `antfarm workflow run <workflow> "task" --repo /opt/assistant-platform/mc`
+- **Default repo for Mission Control work:** `/opt/assistant-platform/mc` (NOT `/root/projects/mission-control`)
 
 ## Running Services
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| claude-telegram.service | — | Telegram bot with Claude Code agent |
+| claude-telegram.service | — | Telegram bot with Claude Code agent (pinned v1.3.0 + 7 patches) |
 | comment-listener.service | — | Realtime task comment → Claude session spawner |
 | mission-control-api.service | 8091 | Mission Control API (Express backend) |
 | nginx.service | 80/443/8090 | Reverse proxy — meetpif.com (Cloudflare Origin CA) |
+| resend-webhook.service | 8092 | Inbound email webhook → forward to Gmail |
 | docker.service | — | Container runtime |
 | cron.service | — | Schedule checker (every minute) |
 
@@ -181,6 +272,8 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 | Script | Purpose |
 |--------|---------|
 | pif-runner.py | Workflow engine — loads YAML, executes steps, manages state |
+| apply-patches.sh | Re-apply Pif's 7 patches to claude-code-telegram after upgrade |
+| upgrade-telegram-bot.sh | Safe upgrade wrapper: install + patch + restart + verify |
 | pif-heartbeat.sh | System health check & uptime ping |
 | telegram-send.sh | Send messages to Pavol via Telegram |
 | antfarm-dispatch.py | Process antfarm workflow steps |
