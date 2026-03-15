@@ -394,29 +394,136 @@ interface BlogPost {
 
 ---
 
-## Per-Article Pipeline
+## Automation Pipeline (from OpenClaw SEO Guide)
+
+Reference: OpenClaw SEO Content Automation Guide (Google Drive .docx). The guide describes a 4-phase autonomous pipeline. Below is our adaptation for Pif's architecture.
+
+### Phase 1: Keyword Research & Validation
+
+Our approach differs from OpenClaw's — we use a **fixed topic map** (93 articles pre-planned), not dynamic trend discovery. But we still validate each topic before writing.
+
+```
+Per-topic validation (before drafting):
+1. SERP check via Brave Search API
+   - Who ranks for "AI assistant for [tool]"?
+   - What do top 5 articles cover? What gaps exist?
+   - allintitle count — if >5,000, keyword may be too competitive
+2. Reddit/community validation
+   - Are people actually asking about AI + [tool]?
+   - What specific pain points surface?
+   - Extract exact phrasing for FAQ section
+3. Competitor content analysis
+   - Fetch top 3-5 ranking articles
+   - Note: word count, sections covered, code examples, freshness
+   - Identify what they miss — that's our angle
+4. Validation score
+   - Search volume signal (Brave result count)
+   - Community interest (Reddit post frequency)
+   - Competition level (allintitle, content quality)
+   - Score ≥90 → proceed to draft. <90 → deprioritize.
+```
+
+### Phase 2: Content Creation
 
 ```
 1. Pick topic from map → slug + title + target keyword
-2. SERP check (10 min)
-   - Who ranks? What do they cover? What gaps exist?
-3. Draft using template (30-45 min)
-   - Fill each H2 section
-   - 3-5 H3 capabilities in Section 2
+2. Run validation (Phase 1) — 10 min
+3. Draft using template — 30-45 min (Pif-authored, Antfarm-assisted)
+   - Fill each H2 section (7 mandatory sections)
+   - 3-5 H3 capabilities in Section 2 (informed by competitor gaps)
    - Code blocks in at least 2 sections
-   - "The Math" section with real numbers
-   - CTA to Pif in Get Started
-4. Publish + distribute (automated)
-   - Push to /blog/[slug]
-   - Generate OG image
-   - Submit to GSC
-   - Update sitemap
-   - Generate + post LinkedIn
-   - Generate + post Twitter
-   - Cross-link from related articles
+   - "The Numbers" section with real data
+   - "Honest Tradeoffs" section — 3-5 real limitations
+   - FAQ schema with 5-7 questions (sourced from Reddit + "People Also Ask")
+   - CTA to Pif /custom in Get Started
+4. Quality gate
+   - SEO checklist: keyword in title, first 100 words, at least 1 H2, conclusion
+   - Word count ≥3,000
+   - Code blocks ≥3
+   - Internal links ≥3 (to other blog posts + product pages)
+   - External links ≥2 (to tool docs — builds E-E-A-T)
+```
+
+### Phase 3: Publishing & Distribution
+
+```
+1. Publish to /blog/[slug]
+   - Add BlogPost entry with richContent, tags, cta
+   - Build + deploy (Vite → mc/dist/ → nginx → Cloudflare)
+2. Post-publish automation
+   - Generate OG image (title + Pif brand template)
+   - Submit to Google Search Console for indexing
+   - Update sitemap.xml
+   - Update internal link database (topic → URL → anchor texts)
+   - Cross-link: update 2-3 existing articles to link to new one
+3. Social distribution
+   - Generate + post LinkedIn (hook + 5 bullets + CTA)
+   - Generate + post Twitter/X (280-char hook + link)
+   - Reddit: helpful comment in relevant subreddit (not promotional)
 ```
 
 **Daily at 10:00 AM CET.**
+
+### Phase 4: Monitoring & Optimization
+
+```
+Day 2:   Is it indexed? (GSC URL Inspection)
+Day 7:   Initial ranking position. Impressions starting?
+Day 14:  Impressions, clicks, CTR. Compare to other articles.
+Day 30:  Full analysis — keep / update / consolidate.
+         If not page 1-3: re-run competitor analysis, update content.
+```
+
+**Monthly optimization cycle:**
+- Re-analyze underperforming articles (ranking >30 after 30 days)
+- Fetch updated competitor content — have they improved?
+- Add missing sections, update stats, increase word count
+- Resubmit to GSC after update
+- Track: which categories perform best? Adjust publishing priority.
+
+---
+
+## Advanced Strategies (from OpenClaw Guide)
+
+### Topic Clusters (Hub-and-Spoke)
+After 10+ articles published, build cluster structure:
+- **Pillar page**: `/blog/practical-ai-assistants-operators-guide` (3,000-4,000 words, broad coverage)
+- **Supporting articles**: 5-10 tool-specific articles linking to pillar
+- **Link structure**: All spokes → hub. Hub → all spokes. Spokes cross-link where relevant.
+- Category hub pages (`/blog/productivity`, `/blog/crm`) serve as secondary pillar pages.
+
+### Competitive Displacement
+Target outdated competitor articles (published 2023-2024):
+- Flag articles with stale data during SERP check
+- Create "Updated for 2026" version with fresh stats, new tools, better examples
+- Google rewards freshness — this is a shortcut to page 1.
+
+### FAQ Schema Optimization
+Target Google's featured snippets:
+- Research exact question phrasing from Reddit + "People Also Ask"
+- Direct answer first (40-60 words), then context
+- Minimum 5, maximum 10 FAQs per article
+- `FAQPage` JSON-LD schema on every article (in addition to BlogPosting)
+
+### Internal Link Database
+Maintain a structured map of all published articles:
+- URL, title, main topics, suggested anchor texts
+- Every new article checks the database for cross-linking opportunities
+- Every existing article gets checked for links to the new one
+- Target: 3-5 internal links per article, growing over time.
+
+### Content Repurposing
+Each article generates multiple distribution assets:
+- **LinkedIn post**: Hook + 5 bullets + CTA (150-300 words)
+- **Twitter thread**: 8-10 tweets breaking down key points
+- **Email snippet**: Summary + CTA for newsletter
+- Automated via Antfarm content-factory workflow.
+
+### Backlink Outreach (Weekly)
+- Search for "[topic] resources" and "[topic] statistics" pages
+- Identify sites that link out to similar content
+- Generate personalized outreach emails (<100 words, specific to their article)
+- 10-20 opportunities per week.
 
 ---
 
@@ -431,21 +538,22 @@ interface BlogPost {
 
 ---
 
-## Performance Loop
-
-- **Day 2:** Is it indexed?
-- **Day 7:** Initial ranking position
-- **Day 14:** Impressions, clicks, CTR
-- **Day 30:** Keep / update / consolidate
-
----
-
 ## Success Metrics
 
-**Month 1:** 30 articles published + indexed. Baseline traffic in GSC.
-**Month 2:** Top performers identified. Multiple page-1 rankings for long-tails.
-**Month 3:** Full coverage (93). Organic > direct. Blog driving signups.
+| Timeframe | Target |
+|-----------|--------|
+| Week 1 | 5-7 articles published. All validation scores ≥90. System stable. |
+| Month 1 | 30 articles published + indexed. Baseline traffic in GSC. Cost tracked. |
+| Month 2 | Top performers identified. Multiple page-1 rankings for long-tails. Topic clusters forming. |
+| Month 3 | Full coverage (93). Organic > direct. Blog driving signups. Internal link network mature. |
+
+**Cost target:** <$0.30 per article in API calls. <$150/month total.
+
+**Performance benchmarks:**
+- Articles ranking page 2-3 within 1 week = good
+- Articles ranking page 1-2 within 2 weeks = excellent
+- Organic traffic growing 20%+ monthly by month 2
 
 ---
 
-*Strategy v3 by Pif, 2026-03-15. Task: dc1a1016*
+*Strategy v4 by Pif, 2026-03-15. Task: dc1a1016. Incorporates OpenClaw SEO Content Automation Guide.*
