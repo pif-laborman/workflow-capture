@@ -40,16 +40,15 @@ VOICE_SHORTCUTS = {
 def get_api_key():
     key = os.environ.get("ELEVENLABS_API_KEY")
     if not key:
-        # Try loading from .pif-env
-        env_file = Path.home() / ".pif-env"
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                line = line.strip()
-                if line.startswith("ELEVENLABS_API_KEY="):
-                    key = line.split("=", 1)[1].strip().strip("'\"")
-                    break
+        # Fall back to pif-creds (logins table)
+        try:
+            import subprocess as _sp
+            _result = _sp.run(["pif-creds", "get", "ElevenLabs"], capture_output=True, text=True, check=True)
+            key = _result.stdout.strip()
+        except Exception:
+            pass
     if not key:
-        print("Error: ELEVENLABS_API_KEY not set. Add it to ~/.pif-env", file=sys.stderr)
+        print("Error: ELEVENLABS_API_KEY not set. Store in logins table or set env var.", file=sys.stderr)
         sys.exit(1)
     return key
 

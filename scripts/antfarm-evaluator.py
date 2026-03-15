@@ -33,7 +33,10 @@ SUPABASE_KEY = os.environ.get("PIF_SUPABASE_SERVICE_ROLE_KEY", "")
 if not SUPABASE_KEY:
     try:
         import subprocess as _sp
-        _result = _sp.run(["pif-creds", "get", "Supabase"], capture_output=True, text=True, check=True)
+        _result = _sp.run(
+            ["bash", "-c", "set -a; source ~/.pif-env 2>/dev/null; source ~/.env 2>/dev/null; set +a; pif-creds get Supabase"],
+            capture_output=True, text=True, check=True,
+        )
         SUPABASE_KEY = _result.stdout.strip()
     except Exception:
         SUPABASE_KEY = os.environ.get("PIF_SUPABASE_ANON_KEY", "")

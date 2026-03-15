@@ -136,10 +136,9 @@ def transcript_to_markdown(call, transcript_data):
             label += f" ({affiliation})"
         participant_lines.append(label)
 
-    # Format date
+    # Format date — always include call ID for dedup
     date_str = started[:10] if started else "unknown-date"
-    safe_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '-')[:60]
-    filename = f"{date_str}_{safe_title}.md"
+    filename = f"{date_str}_Call-{call_id}.md"
 
     lines = [
         f"# {title}",
@@ -188,6 +187,7 @@ def main():
     parser.add_argument("--days", type=int, default=1, help="Look back N days (default: 1)")
     parser.add_argument("--call-id", type=str, help="Fetch transcript for a specific call ID")
     parser.add_argument("--list", action="store_true", help="List recent calls without fetching transcripts")
+    parser.add_argument("--sync", action="store_true", help="Skip calls already downloaded (match by call ID in filename)")
     parser.add_argument("--output-dir", type=str, default=str(TRANSCRIPT_DIR), help="Output directory")
     args = parser.parse_args()
 
@@ -230,6 +230,24 @@ def main():
             duration = c.get("duration", 0)
             cid = c.get("id", "?")
             print(f"  [{started}] {title} ({duration // 60}m) — {cid}")
+        return
+
+    # Skip calls already on disk (match Call-{id} in filename)
+    if args.sync:
+        existing_ids = set()
+        for f in out_dir.glob("*_Call-*.md"):
+            # Extract call ID from filename like 2026-03-11_Call-1234567890.md
+            match = re.search(r"Call-(\d+)\.md$", f.name)
+            if match:
+                existing_ids.add(match.group(1))
+        before = len(calls)
+        calls = [c for c in calls if str(c["id"]) not in existing_ids]
+        skipped = before - len(calls)
+        if skipped:
+            print(f"Skipped {skipped} already-downloaded call(s).")
+
+    if not calls:
+        print("Nothing new to fetch.")
         return
 
     # Fetch transcripts

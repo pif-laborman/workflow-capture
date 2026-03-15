@@ -108,4 +108,29 @@ log "Consolidation output: $(echo "$OUTPUT" | tail -5)"
 # Always rebuild QMD index as a safety net (Claude should do it too, but belt + suspenders)
 qmd update >> "$LOG" 2>&1 || log "WARN: qmd update failed (non-fatal)"
 
+# ─── Supabase retention cleanup ──────────────────────────────────────
+# Prune tables that grow unbounded. Keeps DB within free-plan limits.
+
+SB_KEY="${PIF_SUPABASE_SERVICE_ROLE_KEY:-$(pif-creds get Supabase 2>/dev/null)}"
+CUTOFF=$(date -u -d '7 days ago' '+%Y-%m-%dT%H:%M:%SZ')
+
+heartbeats_deleted=$(curl -s -o /dev/null -w '%{http_code}' \
+    -X DELETE "${PIF_SUPABASE_URL}/rest/v1/heartbeats?created_at=lt.${CUTOFF}" \
+    -H "apikey: ${SB_KEY}" \
+    -H "Authorization: Bearer ${SB_KEY}" \
+    -H "Prefer: return=representation" \
+    -H "Content-Type: application/json")
+
+if [ "$heartbeats_deleted" = "200" ]; then
+    log "Retention: pruned heartbeats older than 7 days"
+else
+    log "WARN: heartbeats cleanup returned HTTP ${heartbeats_deleted}"
+fi
+
+# ─── Schema drift detection ──────────────────────────────────────────
+# Compares live Supabase schema to SCHEMA.md. Appends drift if found.
+
+log "Running schema sync"
+~/scripts/schema-sync.sh --fix >> "$LOG" 2>&1 && log "Schema in sync" || log "WARN: schema drift detected — check SCHEMA.md"
+
 log "Nightly consolidation complete for ${TODAY}"

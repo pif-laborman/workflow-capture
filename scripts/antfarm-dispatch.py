@@ -171,18 +171,6 @@ def build_prompt(agent_name: str, task_input: str) -> str:
     return "\n---\n".join(parts)
 
 
-# --- Ralph credential sync ---
-
-def sync_ralph_credentials():
-    subprocess.run(
-        ["bash", "-c",
-         "cp /root/.claude/.credentials.json /home/ralph/.claude/.credentials.json && "
-         "chown ralph:ralph /home/ralph/.claude/.credentials.json && "
-         "chmod 600 /home/ralph/.claude/.credentials.json"],
-        timeout=10, capture_output=True,
-    )
-
-
 # --- Antfarm CLI wrappers ---
 
 def antfarm_peek(agent_id: str) -> bool:
@@ -356,6 +344,11 @@ def execute_agent(agent_name: str, role: str, prompt: str, repo: str,
 
     Returns dict with 'success', 'output'/'error', and 'usage' (token metrics).
     """
+    if repo and not Path(repo).is_dir():
+        return {"success": False,
+                "error": f"Repo path does not exist: {repo} — check --repo value",
+                "usage": {}}
+
     config = ROLE_CONFIG.get(role, ROLE_CONFIG["analysis"])
     # Deep copy cmd list so we don't mutate ROLE_CONFIG
     config = {**config, "cmd": list(config["cmd"])}
@@ -376,7 +369,14 @@ def execute_agent(agent_name: str, role: str, prompt: str, repo: str,
 
     try:
         if config["user"] == "ralph":
-            sync_ralph_credentials()
+            # Ensure ralph can read the shared credentials file (chmod 600 from
+            # token refresh wipes ACL mask — re-apply before each run)
+            creds_file = "/root/.claude/.credentials.json"
+            if os.path.exists(creds_file):
+                subprocess.run(
+                    ["setfacl", "-m", "u:ralph:rw,m::rw", creds_file],
+                    timeout=5, capture_output=True,
+                )
             cmd_str = " ".join(config["cmd"])
             shell_cmd = (
                 f'unset CLAUDECODE; cd "{repo}" && {cmd_str} < "{prompt_file}"'
@@ -717,7 +717,7 @@ def close_stale_runs():
     try:
         running = sb_select("antfarm_runs", {
             "status": "eq.running",
-            "select": "id,task,created_at,context",
+            "select": "id,task,created_at,updated_at,context",
         })
         now = datetime.now(timezone.utc)
         for run in running:
@@ -749,11 +749,12 @@ def close_stale_runs():
                 continue
 
             # Check 2: run stuck for >4h → force-fail
-            created = run.get("created_at", "")
-            if created:
+            # Use updated_at (reset on resume) so resumed runs don't get instantly killed
+            last_activity = run.get("updated_at") or run.get("created_at", "")
+            if last_activity:
                 try:
-                    created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-                    age_hours = (now - created_dt).total_seconds() / 3600
+                    activity_dt = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+                    age_hours = (now - activity_dt).total_seconds() / 3600
                     if age_hours > 4:
                         sb_update("antfarm_runs", {"id": run_id}, {
                             "status": "failed",

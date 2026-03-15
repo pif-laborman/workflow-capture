@@ -17,10 +17,14 @@ const crypto = require('crypto')
 
 const SB_URL = process.env.PIF_SUPABASE_URL
 const SB_ANON_KEY = process.env.PIF_SUPABASE_ANON_KEY
+const SB_SERVICE_ROLE_KEY = process.env.PIF_SUPABASE_SERVICE_ROLE_KEY
 const CREDS_PASSWORD = process.env.PIF_CREDS_PASSWORD
 
-if (!SB_URL || !SB_ANON_KEY || !CREDS_PASSWORD) {
-  console.error('Missing PIF_SUPABASE_URL, PIF_SUPABASE_ANON_KEY, or PIF_CREDS_PASSWORD')
+// Prefer service_role key (bypasses RLS). Fall back to anon for backward compat.
+const SB_AUTH_KEY = SB_SERVICE_ROLE_KEY || SB_ANON_KEY
+
+if (!SB_URL || !SB_AUTH_KEY || !CREDS_PASSWORD) {
+  console.error('Missing PIF_SUPABASE_URL, PIF_SUPABASE_SERVICE_ROLE_KEY (or PIF_SUPABASE_ANON_KEY), or PIF_CREDS_PASSWORD')
   process.exit(1)
 }
 
@@ -47,8 +51,8 @@ async function fetchLogins(filter) {
     `${SB_URL}/rest/v1/logins?select=id,service_name,url,username,encrypted_password,encrypted_notes${qs}`,
     {
       headers: {
-        'apikey': SB_ANON_KEY,
-        'Authorization': `Bearer ${SB_ANON_KEY}`,
+        'apikey': SB_AUTH_KEY,
+        'Authorization': `Bearer ${SB_AUTH_KEY}`,
       },
     }
   )

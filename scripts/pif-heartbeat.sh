@@ -49,8 +49,31 @@ JSON_SCHEMA='{"type":"object","properties":{"alerts":{"type":"array","items":{"t
 # ─── Stage 0: Run Antfarm Medic ──────────────────────────────────────
 # Medic handles workflow-level health (stuck steps, stalled/zombie runs).
 # Run it first so Haiku triage has fresh data in antfarm_medic_checks.
+# Antfarm needs PIF_SUPABASE_SERVICE_ROLE_KEY (not in .pif-env — fetch via pif-creds).
+
+# ─── Stage 0a: Ralph credential symlink health ───────────────────────
+# If symlink broke (e.g. file was delete+recreated), recreate it
+if [ ! -L /home/ralph/.claude/.credentials.json ]; then
+    log "WARN: Ralph credentials symlink missing — recreating"
+    rm -f /home/ralph/.claude/.credentials.json
+    ln -s /root/.claude/.credentials.json /home/ralph/.claude/.credentials.json
+    setfacl -m u:ralph:rw /root/.claude/.credentials.json
+    setfacl -m u:ralph:x /root/.claude
+    notify "Pif Heartbeat: Ralph credential symlink was broken — recreated."
+fi
+
+# ─── Stage 0b: Telegram bot patch health ─────────────────────────────
+# Detect if patches drifted (e.g. accidental uv tool upgrade)
+if ! bash /root/scripts/apply-patches.sh --check >>"$LOG" 2>&1; then
+    log "WARN: Telegram bot patches missing — re-applying"
+    bash /root/scripts/apply-patches.sh >>"$LOG" 2>&1 && \
+        systemctl restart claude-telegram.service && \
+        notify "Pif Heartbeat: telegram bot patches were missing — re-applied and restarted." || \
+        notify "Pif Heartbeat: telegram bot patches missing and re-apply FAILED. Manual intervention needed."
+fi
 
 log "Stage 0: Running antfarm medic"
+export PIF_SUPABASE_SERVICE_ROLE_KEY="${PIF_SUPABASE_SERVICE_ROLE_KEY:-$(pif-creds get Supabase 2>/dev/null)}"
 antfarm medic run >>"$LOG" 2>&1 || log "WARN: antfarm medic run failed (non-fatal)"
 
 # ─── Stage 1: Haiku Triage ───────────────────────────────────────────
@@ -227,6 +250,149 @@ print('\n'.join(lines))
 " <<< "$PARSED")
     notify "$ALERT_MSG"
     log "Alerts sent to Telegram"
+fi
+
+# ─── Stage 1.75: Append to daily note ─────────────────────────────
+# Gather last-hour activity from all sources and append to today's daily note.
+# Pure bash + python — no AI call, just structured facts.
+
+DAILY_NOTE="$HOME/memory/daily/$(date +%Y-%m-%d).md"
+HOUR_AGO=$(date -u -d '1 hour ago' '+%Y-%m-%d %H:%M:%S')
+HOUR_TAG=$(date '+%H:%M')
+
+NOTE_LINES=$(python3 << 'PYEOF'
+import json, os, sqlite3, subprocess, sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+lines = []
+now = datetime.now(timezone.utc)
+hour_ago = now - timedelta(hours=1)
+hour_ago_iso = hour_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
+hour_ago_local = hour_ago.strftime("%Y-%m-%d %H:%M:%S")
+today_str = datetime.now().strftime("%Y-%m-%d")
+
+# 1. Telegram messages from last hour
+try:
+    db = sqlite3.connect(os.path.expanduser("~/data/bot.db"))
+    rows = db.execute(
+        "SELECT datetime(timestamp) as ts, substr(prompt, 1, 120) as p "
+        "FROM messages WHERE timestamp >= ? ORDER BY timestamp",
+        (hour_ago_local,)
+    ).fetchall()
+    db.close()
+    if rows:
+        lines.append("Telegram:")
+        for ts, p in rows:
+            # Clean up voice prefix
+            short = p.strip().replace("\n", " ")
+            lines.append(f"  - [{ts[11:16]}] {short}")
+except Exception:
+    pass
+
+# 2. Git commits from last hour (both repos)
+for repo, label in [("/root", "pif-infra"), ("/opt/assistant-platform", "assistant-platform")]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo, "log", f"--after={hour_ago_iso}", "--oneline", "--all"],
+            capture_output=True, text=True, timeout=5
+        )
+        commits = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
+        if commits:
+            lines.append(f"Commits ({label}):")
+            for c in commits:
+                lines.append(f"  - {c}")
+    except Exception:
+        pass
+
+# 3. Task status changes from last hour
+try:
+    sb_url = os.environ.get("PIF_SUPABASE_URL", "")
+    sb_key = os.environ.get("PIF_SUPABASE_SERVICE_ROLE_KEY", "")
+    if not sb_key:
+        r = subprocess.run(["pif-creds", "get", "Supabase"], capture_output=True, text=True, timeout=5)
+        sb_key = r.stdout.strip()
+    if sb_url and sb_key:
+        import urllib.request
+        url = f"{sb_url}/rest/v1/tasks?select=title,status&updated_at=gte.{hour_ago_iso}&order=updated_at.desc&limit=10"
+        req = urllib.request.Request(url, headers={
+            "apikey": sb_key, "Authorization": f"Bearer {sb_key}"
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        tasks = json.loads(resp.read())
+        if tasks:
+            lines.append("Task changes:")
+            for t in tasks:
+                lines.append(f"  - [{t['status']}] {t['title'][:80]}")
+except Exception:
+    pass
+
+# 4. Session transcripts modified in last hour (extract first user prompt as topic)
+try:
+    session_dir = Path.home() / ".claude" / "projects" / "-root"
+    hour_ago_ts = hour_ago.timestamp()
+    recent = []
+    for f in session_dir.glob("*.jsonl"):
+        if f.stat().st_mtime >= hour_ago_ts:
+            # Extract first user message as topic
+            with open(f) as fh:
+                for line in fh:
+                    try:
+                        obj = json.loads(line)
+                        msg = obj.get("message", {})
+                        if msg.get("role") == "user":
+                            content = msg.get("content", "")
+                            if isinstance(content, list):
+                                content = " ".join(
+                                    c.get("text", "") if isinstance(c, dict) else str(c)
+                                    for c in content
+                                )
+                            content = content.strip().replace("\n", " ")[:100]
+                            if content and not content.startswith("<"):
+                                recent.append(content)
+                            break
+                    except Exception:
+                        continue
+    if recent:
+        lines.append("Active sessions:")
+        for topic in recent[:5]:  # max 5
+            lines.append(f"  - {topic}")
+except Exception:
+    pass
+
+# 5. Workflow events from last hour
+try:
+    if sb_url and sb_key:
+        url = (f"{sb_url}/rest/v1/events?type=in.(workflow_started,workflow_completed,workflow_failed)"
+               f"&created_at=gte.{hour_ago_iso}&order=created_at.asc&limit=10")
+        req = urllib.request.Request(url, headers={
+            "apikey": sb_key, "Authorization": f"Bearer {sb_key}"
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        events = json.loads(resp.read())
+        if events:
+            lines.append("Workflows:")
+            for e in events:
+                src = e.get("source", "").replace("workflow:", "")
+                lines.append(f"  - {e['type'].replace('workflow_', '')} {src}")
+except Exception:
+    pass
+
+if lines:
+    print("\n".join(lines))
+else:
+    print("")
+PYEOF
+)
+
+if [ -n "$NOTE_LINES" ] && [ "$NOTE_LINES" != "" ]; then
+    # Only append if there's actual content
+    echo "" >> "$DAILY_NOTE"
+    echo "## ~${HOUR_TAG} — heartbeat" >> "$DAILY_NOTE"
+    echo "$NOTE_LINES" >> "$DAILY_NOTE"
+    log "Appended hourly update to daily note"
+else
+    log "No activity in last hour — skipping daily note append"
 fi
 
 # ─── Stage 2: Opus Action (only if task found) ───────────────────────

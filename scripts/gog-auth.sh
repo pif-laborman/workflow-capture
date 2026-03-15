@@ -3,7 +3,7 @@
 # Usage: ./gog-auth.sh <redirect-url>
 set -euo pipefail
 source ~/.pif-env
-export GOG_KEYRING_PASSWORD
+export GOG_KEYRING_PASSWORD="${GOG_KEYRING_PASSWORD:-$(pif-creds get 'GOG (Google Workspace CLI)' 2>/dev/null)}"
 
 if [ -z "${1:-}" ]; then
   echo "Step 1: Getting auth URL..."

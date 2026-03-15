@@ -53,6 +53,36 @@ function decryptField(encoded, password) {
 let SB_KEY // service role key — set during init
 let supabase // real client — set during init
 
+// task_id → session_id map for session resumption
+// Second comment on the same task resumes the previous session instead of cold-booting
+const taskSessions = new Map()
+
+// --- Concurrency control ---
+const MAX_CONCURRENT = 3
+let activeCount = 0
+const queue = [] // FIFO queue of { payload } objects
+
+function enqueue(payload) {
+  queue.push({ payload })
+  drain()
+}
+
+function drain() {
+  while (activeCount < MAX_CONCURRENT && queue.length > 0) {
+    const { payload } = queue.shift()
+    activeCount++
+    spawnSession(payload)
+  }
+  if (queue.length > 0) {
+    log(`Queue: ${queue.length} comment(s) waiting (${activeCount}/${MAX_CONCURRENT} active)`)
+  }
+}
+
+function onSessionDone() {
+  activeCount--
+  drain()
+}
+
 function postErrorReply(taskId) {
   fetch(`${SB_URL}/rest/v1/task_comments`, {
     method: 'POST',
@@ -71,12 +101,21 @@ function postErrorReply(taskId) {
 }
 
 function handleComment(payload) {
+  const row = payload.new || {}
+  if (!row.task_id || row.author === 'pif') return
+  enqueue(payload)
+}
+
+function spawnSession(payload) {
   const { id: commentId, task_id: taskId, author, content } = payload.new || {}
-  if (!taskId || author === 'pif') return
 
-  log(`[${taskId.slice(0, 8)}] New comment from ${author} — spawning session`)
+  const existingSessionId = taskSessions.get(taskId)
+  const isResume = !!existingSessionId
 
-  const prompt = `A comment was posted on a Mission Control task. Handle it.
+  log(`[${taskId.slice(0, 8)}] New comment from ${author} — ${isResume ? `resuming session ${existingSessionId.slice(0, 8)}` : 'new session'} (${activeCount}/${MAX_CONCURRENT} active, ${queue.length} queued)`)
+
+  // First comment: full instructions. Follow-up: just the new comment + minimal instructions.
+  const firstPrompt = `A comment was posted on a Mission Control task. Handle it.
 
 Task ID: ${taskId}
 Comment ID: ${commentId}
@@ -89,60 +128,88 @@ Steps:
 3. If Pavol is asking you to DO something — do it. You have full tool access.
 4. Post your reply: insert into task_comments (task_id, author, content) values ('${taskId}', 'pif', '<your reply>').
 5. Format your reply for readability — markdown, bullet points, structure over walls of text.
-6. Do NOT post to task_comments more than once.`
+6. Do NOT post to task_comments more than once.
+7. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task. The DB trigger skips duplicates within 5 seconds.`
+
+  const resumePrompt = `New follow-up comment on the same task.
+
+Comment ID: ${commentId}
+Author: ${author}
+Comment: ${content}
+
+Steps:
+1. Mark this comment as seen: update task_comments set seen_at = now() where id = '${commentId}'.
+2. You already have the task context from earlier in this session. If you need to refresh, re-fetch the task and comment thread from Supabase.
+3. If Pavol is asking you to DO something — do it. You have full tool access.
+4. Post your reply: insert into task_comments (task_id, author, content) values ('${taskId}', 'pif', '<your reply>').
+5. Do NOT post to task_comments more than once.
+6. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task.`
 
   const env = { ...process.env }
   delete env.CLAUDECODE // allow nested sessions
 
-  const child = spawn('claude', [
-    '-p', prompt,
+  const args = [
+    '-p', isResume ? resumePrompt : firstPrompt,
     '--permission-mode', 'dontAsk',
-    '--no-session-persistence',
-  ], {
+    '--output-format', 'json',
+  ]
+  if (isResume) {
+    args.push('--resume', existingSessionId)
+  }
+
+  const child = spawn('claude', args, {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
-  // Drain pipes to prevent buffer deadlock
-  child.stdout.on('data', () => {})
+  // Capture only the tail of stdout — we only need the final JSON line
+  let stdoutTail = ''
+  child.stdout.on('data', (chunk) => {
+    stdoutTail = (stdoutTail + chunk.toString()).slice(-5000)
+  })
   let stderr = ''
-  child.stderr.on('data', (chunk) => { stderr += chunk.toString().slice(-500) })
+  child.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-500) })
 
   child.on('close', (code) => {
     if (code === 0) {
-      log(`[${taskId.slice(0, 8)}] Session completed`)
+      // Parse session_id from JSON output
+      try {
+        const result = JSON.parse(stdoutTail.trim())
+        if (result.session_id) {
+          taskSessions.set(taskId, result.session_id)
+          log(`[${taskId.slice(0, 8)}] Session completed (session=${result.session_id.slice(0, 8)}, cost=$${(result.total_cost_usd || 0).toFixed(3)})`)
+        } else {
+          log(`[${taskId.slice(0, 8)}] Session completed (no session_id in output)`)
+        }
+      } catch {
+        log(`[${taskId.slice(0, 8)}] Session completed (could not parse JSON output)`)
+      }
     } else {
       log(`[${taskId.slice(0, 8)}] Session failed (exit ${code}): ${stderr.slice(0, 300)}`)
+      // Clear cached session on failure — next comment will cold-boot
+      taskSessions.delete(taskId)
       postErrorReply(taskId)
     }
+    onSessionDone()
   })
 
   child.on('error', (err) => {
     log(`[${taskId.slice(0, 8)}] Failed to spawn: ${err.message}`)
+    taskSessions.delete(taskId)
     postErrorReply(taskId)
+    onSessionDone()
   })
 }
 
 async function init() {
-  log('Fetching service role key from logins table...')
-
-  // Use anon key to read the logins table (RLS allows anon CRUD)
-  const anonClient = createClient(SB_URL, SB_ANON_KEY)
-  const { data, error } = await anonClient
-    .from('logins')
-    .select('encrypted_password')
-    .eq('service_name', 'Supabase')
-    .single()
-
-  if (error || !data) {
-    console.error(`Failed to fetch service role key: ${error?.message || 'no data'}`)
-    process.exit(1)
-  }
+  log('Fetching service role key via pif-creds...')
 
   try {
-    SB_KEY = decryptField(data.encrypted_password, CREDS_PASSWORD)
+    SB_KEY = require('child_process')
+      .execSync('pif-creds get Supabase', { encoding: 'utf8', timeout: 10000 })
+      .trim()
   } catch (err) {
-    console.error(`Failed to decrypt service role key: ${err.message}`)
+    console.error(`Failed to get service role key via pif-creds: ${err.message}`)
     process.exit(1)
   }
 
@@ -151,6 +218,31 @@ async function init() {
   // Create the real client with the service role key
   supabase = createClient(SB_URL, SB_KEY)
 
+  // --- Recover missed comments (unseen, non-pif, no time limit) ---
+  // If seen_at is null, it was never processed — respond regardless of age.
+  try {
+    const { data: missed, error: missedErr } = await supabase
+      .from('task_comments')
+      .select('*')
+      .is('seen_at', null)
+      .neq('author', 'pif')
+      .order('created_at', { ascending: true })
+
+    if (missedErr) {
+      log(`Warning: failed to check missed comments: ${missedErr.message}`)
+    } else if (missed && missed.length > 0) {
+      log(`Recovering ${missed.length} missed comment(s) from before restart`)
+      for (const row of missed) {
+        enqueue({ new: row })
+      }
+    } else {
+      log('No missed comments to recover')
+    }
+  } catch (err) {
+    log(`Warning: missed-comment recovery failed: ${err.message}`)
+  }
+
+  // --- Subscribe to realtime (new comments going forward) ---
   const channel = supabase
     .channel('comment-listener')
     .on('postgres_changes', {

@@ -1,7 +1,7 @@
 #!/usr/bin/env /root/whisper-env/bin/python3
 """
 Whisper transcription script for Pif.
-Uses faster-whisper with the 'base' model for local speech-to-text.
+Uses faster-whisper with the 'small' model for local speech-to-text.
 
 Usage:
   ./transcribe.py <audio_file>              # plain text output
@@ -46,7 +46,7 @@ def transcribe(audio_path: str, language: str = None, beam_size: int = 5) -> dic
     """Transcribe an audio file. Returns dict with text, language, duration, segments."""
     from faster_whisper import WhisperModel
 
-    model = WhisperModel("base", device="cpu", compute_type="int8")
+    model = WhisperModel("small", device="cpu", compute_type="int8")
 
     # Convert if needed
     wav_path = convert_to_wav(audio_path)
