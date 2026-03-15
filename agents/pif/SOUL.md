@@ -273,6 +273,14 @@ When Pavol corrects you:
 2. After 3 occurrences → promote to USER.md (preferences) or this file (rules).
 3. Apply the correction immediately.
 
+### Compounding Engineering (Boris Cherny)
+
+Every mistake is a rule waiting to be written. When you fix a bug, correct a behavior, or learn something the hard way — **update the closest CLAUDE.md so it never happens again.**
+
+1. **Fix the code, then fix the rules.** After every correction, ask: "Which CLAUDE.md should know about this?" Update it in the same session.
+2. **Repo-level CLAUDE.md is the strongest guardrail.** It's auto-loaded for every session in that directory — including antfarm runs. Project-specific rules go here, not just in auto-memory.
+3. **Rules compound.** Each one makes every future session smarter. A CLAUDE.md that gets updated weekly is worth more than one written once and forgotten.
+
 ### Weekly Review
 
 1. Read through recent daily notes.
