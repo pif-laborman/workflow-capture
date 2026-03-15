@@ -1,8 +1,8 @@
 # Meetpif — Execution Plan
 
 **Created**: 2026-03-07
-**Last updated**: 2026-03-15
-**Status**: Active — Phases 0A-0E complete + deployed. Phase 3 (monetization) partially shipped. Phase 1 (first tenant) next.
+**Last updated**: 2026-03-15 (late)
+**Status**: Active — Phases 0A-0E complete + deployed. Phase 3 (monetization) shipped. Multi-tenant automation deployed. Phase 1 (first tenant) next.
 **Companion**: `spec.md` (product spec), `competitive-landscape.md` (market context)
 
 This is the operational map. Every task, every decision, every dependency. We work through this linearly and update it as we go.
@@ -1551,3 +1551,48 @@ Run `454b9796` (failed at test step, code changes complete) — Security hardeni
 
 **Vault key persistence (2026-03-15):**
 - Auth: vault key persisted in localStorage, passed via OAuth hash fragment
+
+### PR #12 — Multi-tenant automation (2026-03-15)
+
+**Merged + deployed** (antfarm run `48d35d68` on `feature/tenant-automation`, completed manually after verifier exhausted retries):
+
+**Scripts tenant-aware (US-003 through US-007):**
+- `heartbeat.sh` — sources TENANT_ID from `~/.pif-env`, scopes Supabase queries, tenant timezone for DND, routes Telegram to tenant's chat_id
+- `comment-listener.js` — filters Realtime subscription by tenant_id, fetches tenant Claude credentials via `/api/internal/claude-config`
+- `pif-runner.py` — filters schedules/triggers/stuck-steps by tenant_id, uses tenant HOME for data paths
+- `telegram-send.sh` — routes to tenant's Telegram chat_id via bot token lookup
+
+**Infrastructure (US-008 through US-011):**
+- Timezone-adjusted schedule seeding — `adjustCronForTimezone()` in `onboarding-helpers.ts` offsets cron hours by IANA timezone at provisioning
+- Auto-start services after provisioning — `provision-watcher.py` runs `systemctl start` on 3 services after marking status=done (non-fatal on failure)
+- Vestigial service removal — dropped `telegram.service.tmpl` and `claude-refresh` templates from provisioner
+- Automation API — `GET /api/automation/services`, `POST start/stop`, `PUT timer` with systemd override.conf
+- Automation UI — Settings panel with service status badges, toggle switches, timer interval editing
+
+**New templates:**
+- `HEARTBEAT.md.tmpl` — triage script for tenant operators
+- `pif-env.tmpl` — added TIMEZONE, TELEGRAM_USER_ID
+- `schedule-checker.{service,timer}.tmpl` — systemd units for tenant schedule checking
+
+**Migrations tracked (not yet applied to Supabase):**
+- 019: Telegram linking (`telegram_user_id` on tenants, `telegram_linking_tokens` table)
+- 020: Notification infrastructure (`notification_channels`, `schedule_notifications`, `notifications` tables)
+
+**Security hardening (manual review):**
+- `automation.ts`: instance_name regex validation (path traversal), on_calendar input sanitization (command injection via systemd override.conf)
+- `pif-runner.py`: `recover_stuck_steps()` and `check_triggers()` scoped by tenant_id
+
+**Also deployed:**
+- Marketplace Pro checkout fix (was stranded on this branch from Telegram session) — direct API call + loading state
+- `MessageCircleMore` alias for lucide-react 0.575.0 type compat
+- `mc/mc/src` symlink restored (was broken by antfarm worktree)
+
+**PR #10 — Tier-based feature gating: CLOSED** — code already on main via direct commit `380c32e`. PR was a stale reference.
+
+### Antfarm issues identified (2026-03-15)
+
+Two bugs surfaced during today's failed runs:
+
+1. **Context bloat in story loops** — The verifier receives accumulated context from all prior stories. By story 8+, the context overwhelms the agent (verifier took 90s → 521s → 721s before exhausting retries). Fix needed: truncate `completed_stories` and `progress` to summaries when passed to the verifier.
+
+2. **Zombie run resurrection** — When a run fails, only the current step is marked `failed`. Remaining steps in `waiting` status cause the hourly fallback scan to re-dispatch the run. Run `7320fe06` was resurrected twice after being marked failed. Fix needed: sweep all non-terminal steps to `failed` when a run fails.
