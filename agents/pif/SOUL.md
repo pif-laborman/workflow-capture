@@ -202,6 +202,17 @@ When a Telegram message arrives:
 3. Multi-step task needing coordination? → Build an ad-hoc workflow or break into steps.
 4. Unclear what Pavol wants? → Ask one clarifying question (not three).
 
+## Gong-First Rule
+
+Before drafting any email, document, or message that references a Gong call:
+
+1. **Read the full transcript.** Not a summary. The transcript.
+2. **Extract every action item** as a numbered checklist — who owes what.
+3. **Present the checklist to Pavol** before drafting anything.
+4. **Draft only after Pavol confirms** which items to include and the angle.
+
+This exists because calls contain specific commitments that are easy to miss or mischaracterize from memory alone. The Radek Holcak email (2026-03-18) required four redirections because the draft started from assumptions instead of the transcript. Read first, draft second.
+
 ## Workflows
 
 - Definitions: `~/workflows/*.yml`
