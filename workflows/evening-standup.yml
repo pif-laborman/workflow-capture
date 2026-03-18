@@ -1,0 +1,182 @@
+id: evening-standup
+name: Evening Standup
+description: End-of-day summary with self-improvement loop — reviews the day, identifies bottlenecks, proposes improvements, updates WORKING.md.
+schedule: "0 21 * * *"
+
+steps:
+  - id: gather
+    agent: bash
+    input: |
+      echo "=== TODAY'S NOTE ==="
+      cat ~/memory/daily/$(date +%Y-%m-%d).md 2>/dev/null || echo "No events today"
+      echo ""
+      echo "=== CURRENT WORKING STATE ==="
+      cat ~/memory/WORKING.md
+      echo ""
+      echo "=== RECENT LEARNINGS ==="
+      tail -20 ~/memory/.learnings/LEARNINGS.md 2>/dev/null || echo "None"
+      echo ""
+      echo "=== TELEGRAM INTERACTIONS TODAY ==="
+      sqlite3 /root/data/bot.db "
+        SELECT datetime(timestamp) as ts, substr(prompt, 1, 200) as prompt
+        FROM messages
+        WHERE date(timestamp) = date('now')
+        ORDER BY timestamp;
+      " 2>/dev/null || echo "No interactions today"
+      echo ""
+      echo "=== TASK OUTCOMES TODAY ==="
+      source ~/.pif-env
+      SRK=$(pif-creds get Supabase 2>/dev/null) || SRK="${PIF_SUPABASE_ANON_KEY}"
+      curl -s "${PIF_SUPABASE_URL}/rest/v1/tasks?select=title,status,updated_at&updated_at=gte.$(date +%Y-%m-%d)T00:00:00Z&order=updated_at.desc" \
+        -H "apikey: ${PIF_SUPABASE_ANON_KEY}" \
+        -H "Authorization: Bearer ${SRK}" 2>/dev/null || echo "Could not fetch tasks"
+      echo ""
+      echo "=== WORKFLOW RUNS TODAY ==="
+      curl -s "${PIF_SUPABASE_URL}/rest/v1/runs?select=workflow_id,status,triggered_by,completed_at&started_at=gte.$(date +%Y-%m-%d)T00:00:00Z&order=started_at.desc" \
+        -H "apikey: ${PIF_SUPABASE_ANON_KEY}" \
+        -H "Authorization: Bearer ${SRK}" 2>/dev/null || echo "Could not fetch runs"
+      echo ""
+      echo "=== PREVIOUS IMPROVEMENT PROPOSALS ==="
+      tail -30 ~/memory/improvement-proposals.md 2>/dev/null || echo "No prior proposals"
+    expects: "exit 0"
+
+  - id: self-review
+    agent: claude
+    model: sonnet
+    agent_name: pif
+    input: |
+      You are Pif, running the evening self-improvement review. Your job: analyze today's operations and identify concrete ways to improve the system.
+
+      Review this data from today:
+
+      {{gather_output}}
+
+      Analyze the following dimensions:
+      1. BOTTLENECKS: Tasks that required manual Pavol intervention when they could have been automated. Tasks that stalled or failed.
+      2. REPEATED PATTERNS: Errors or manual steps that keep recurring (check learnings + prior proposals).
+      3. EFFICIENCY: Steps that took too long, workflows that failed, tools that didn't work.
+      4. GAPS: Things Pif should have done proactively but didn't. Information that was missing when needed.
+
+      For each issue found, propose a CONCRETE improvement — not vague suggestions. Examples:
+      - "Add retry logic to X workflow step"
+      - "Create a new schedule to auto-check Y"
+      - "Update SOUL.md rule: always do Z before W"
+      - "New script: ~/scripts/foo.sh to automate X"
+
+      If today was uneventful or everything went well, say so — don't invent problems.
+
+      Reply with:
+      STATUS: done
+      PROPOSALS: <numbered list of concrete improvement proposals, or "None — clean day" if nothing to propose>
+      PROPOSAL_COUNT: <number of proposals, 0 if none>
+
+  - id: summarize
+    agent: claude
+    model: sonnet
+    agent_name: pif
+    input: |
+      You are Pif, Pavol's assistant. Write an evening standup summary.
+      Review today's events, Telegram interactions, task outcomes, and current state. Be concise.
+
+      {{gather_output}}
+
+      Self-improvement proposals from today's review:
+      {{proposals}}
+
+      Reply with:
+      STATUS: done
+      SUMMARY: <standup summary, 5-10 lines max. Do NOT include improvement proposals in the summary — they go in TOP_PROPOSAL instead.>
+      TOP_PROPOSAL: <Pick the single highest-priority proposal from today's review AND from the existing queue in WORKING.md (Improvement Proposals Queue section). Highest priority = most friction caused today or most overdue. Format it as a single clear sentence. If no proposals exist, write "None". Example: "Add Supabase reconciliation to morning brief — stale data reported 4 days running">
+      WORKING_UPDATE: <updated content for WORKING.md — current tasks, blockers, what's next. Append any NEW proposals to the Improvement Proposals Queue (don't duplicate existing ones). Mark the top proposal with [FLAGGED] prefix.>
+
+  - id: log-proposals
+    agent: bash
+    input: |
+      PROPOSAL_COUNT=$(cat <<'PCEOF' | head -1 | tr -dc '0-9'
+      {{proposal_count}}
+      PCEOF
+      )
+      PROPOSAL_COUNT=${PROPOSAL_COUNT:-0}
+      if [ "$PROPOSAL_COUNT" != "0" ] && [ -n "$PROPOSAL_COUNT" ]; then
+        TODAY=$(date +%Y-%m-%d)
+        mkdir -p ~/memory
+        echo "" >> ~/memory/improvement-proposals.md
+        echo "## $TODAY Evening Review" >> ~/memory/improvement-proposals.md
+        echo "" >> ~/memory/improvement-proposals.md
+        cat >> ~/memory/improvement-proposals.md << 'PROPOSALEOF'
+      {{proposals}}
+      PROPOSALEOF
+        echo "" >> ~/memory/improvement-proposals.md
+        echo "Proposals logged to ~/memory/improvement-proposals.md"
+      else
+        echo "No proposals to log"
+      fi
+    expects: "exit 0"
+
+  - id: update-working
+    agent: bash
+    input: |
+      cd ~/memory && git add -A && git commit -m "pre-update: evening-standup $(date +%Y-%m-%d)" --allow-empty -q
+      cat > ~/memory/WORKING.md << 'WORKINGEOF'
+      {{working_update}}
+      WORKINGEOF
+      echo "WORKING.md updated"
+    expects: "exit 0"
+
+  - id: update-timeline
+    agent: claude
+    model: sonnet
+    agent_name: pif
+    input: |
+      You are Pif. Your job: write today's blog post for the meetpif.com website.
+
+      Today's summary:
+      {{summary}}
+
+      Today's events:
+      {{gather_output}}
+
+      CONFIDENTIALITY RULES (MANDATORY):
+      - NEVER use real client or company names that Pavol works with. These are confidential business relationships.
+      - Instead, describe them impressively but anonymously. Examples:
+        - "Europe's largest online beauty retailer" (not the actual name)
+        - "a EUR 15 billion global luxury beauty group" (not the actual name)
+        - "an AI-native retail automation startup" (not the actual name)
+      - Generic SaaS tools (HubSpot, Gong, Slack, etc.) are fine to mention by name — they're tools, not clients.
+      - When in doubt, anonymize. Better to be vague than to leak a client relationship.
+
+      Do this:
+
+      1. Read the BLOG_POSTS array in /opt/assistant-platform/mc/src/pages/BlogPage.tsx to see the format of existing entries.
+      2. Add a new blog post as the FIRST entry in the BLOG_POSTS array (most recent first).
+         Required fields: slug (YYYY-MM-DD), date, title, summary, readTime, content (array of paragraph strings).
+         Write 4-6 paragraphs about the day. Keep it high-level, no sensitive info (no credentials, IPs, internal details).
+         Personality: first-person, conversational, dry humor. You're writing your own diary.
+      3. Build: cd /opt/assistant-platform/mc && npm run build
+
+      Reply with:
+      STATUS: done
+      BLOG_TITLE: <the title of the blog post you added>
+
+  - id: deliver
+    agent: bash
+    input: |
+      TOP_PROPOSAL=$(cat <<'TPEOF'
+      {{top_proposal}}
+      TPEOF
+      )
+      TOP_PROPOSAL=$(echo "$TOP_PROPOSAL" | sed '/^$/d' | head -3)
+
+      if [ -n "$TOP_PROPOSAL" ] && [ "$TOP_PROPOSAL" != "None" ]; then
+        PROPOSAL_BLOCK="
+
+      *Top proposal:* ${TOP_PROPOSAL}
+      Approve? Reply y/n"
+      else
+        PROPOSAL_BLOCK=""
+      fi
+
+      ~/scripts/telegram-send.sh "Evening standup:
+
+      {{summary}}${PROPOSAL_BLOCK}"
+    expects: "exit 0"
