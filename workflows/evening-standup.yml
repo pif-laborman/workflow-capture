@@ -161,6 +161,10 @@ steps:
   - id: deliver
     agent: bash
     input: |
+      ~/scripts/telegram-send.sh "Evening standup:
+
+      {{summary}}"
+
       TOP_PROPOSAL=$(cat <<'TPEOF'
       {{top_proposal}}
       TPEOF
@@ -168,15 +172,9 @@ steps:
       TOP_PROPOSAL=$(echo "$TOP_PROPOSAL" | sed '/^$/d' | head -3)
 
       if [ -n "$TOP_PROPOSAL" ] && [ "$TOP_PROPOSAL" != "None" ]; then
-        PROPOSAL_BLOCK="
+        sleep 2
+        ~/scripts/telegram-send.sh "💡 *Top proposal:* ${TOP_PROPOSAL}
 
-      *Top proposal:* ${TOP_PROPOSAL}
-      Approve? Reply y/n"
-      else
-        PROPOSAL_BLOCK=""
+      Implement? y/n"
       fi
-
-      ~/scripts/telegram-send.sh "Evening standup:
-
-      {{summary}}${PROPOSAL_BLOCK}"
     expects: "exit 0"
