@@ -109,11 +109,14 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 ### Cloudflare (DNS, SSL, domain)
 - **Domain:** meetpif.com (registered via Cloudflare Registrar)
 - **Zone ID:** ad4f196027669fe0fcafe3b5c19ec0a0
-- **API Token:** `$CLOUDFLARE_API_TOKEN` — scoped to meetpif.com (DNS edit, Zone Settings edit)
-- **Origin CA Key:** `$CLOUDFLARE_ORIGIN_CA_KEY` — for generating Origin CA certificates
+- **Account email:** pif.laborman@gmail.com
+- **API Token** (logins "Cloudflare" password field): scoped token — Zone Settings only, NO DNS permissions despite the name "Edit zone DNS"
+- **Global API Key** (logins "Cloudflare" notes, line 3): full access, use for DNS writes and anything the scoped token can't do
+  - Auth: `X-Auth-Email: pif.laborman@gmail.com` + `X-Auth-Key: <global-key>` headers
+  - **Always use Global API Key for DNS operations** — the scoped token cannot read or write DNS records
+- **Origin CA Key** (logins "Cloudflare" notes, line 2): for generating Origin CA certificates
 - **SSL:** Full (Strict), Origin CA cert expires 2041
 - **Features enabled:** Always HTTPS, min TLS 1.2, HSTS, Brotli
-- **Global API Key auth:** Use `X-Auth-Email: pif.laborman@gmail.com` + `X-Auth-Key` headers (for DNS writes; Bearer token is read-only)
 
 ### Resend (transactional email)
 - **Domain:** meetpif.com (verified, eu-west-1)
@@ -150,13 +153,19 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 - **Scopes:** channels:read, channels:history, groups:read, groups:history, users:read, im:history
 - **Access:** Read-only. Can see 50+ public channels.
 
-### Duvo API (duvo.ai product API)
+### Duvo API (agent orchestration API)
 - **Base URL:** `https://api.duvo.ai/v1`
+- **Docs:** `https://api.duvo.ai/v1/documentation` (Swagger UI) / `https://api.duvo.ai/v1/documentation/json` (OpenAPI spec)
 - **Auth:** Bearer token (`Authorization: Bearer <key>`)
 - **Credential:** `pif-creds get "duvo.ai API"` (note: exact name is `duvo.ai API`, not `Duvo API`)
 - **User:** pavol.dzurjanin@duvo.ai
-- **Purpose:** duvo.ai product/retail API — used for integrations, data access
-- **Note:** Public API key. No MCP integration (direct HTTP calls).
+- **Note:** No MCP integration (direct HTTP calls via curl/fetch).
+- **Capabilities:**
+  - **Agents** — list, create, get (`/v1/agents`, `/v1/agents/{agent_id}`)
+  - **Builds** — list, create, get agent configurations (`/v1/builds`, `/v1/agents/{agent_id}/builds`)
+  - **Runs** — start agent runs, poll status, send/receive messages, stop, respond to human-in-the-loop requests (`/v1/runs`, `/v1/runs/{run_id}/messages`, `/v1/runs/{run_id}/stop`, `/v1/runs/{run_id}/human-requests/{request_id}/respond`)
+  - **Sandboxes** — create file sandboxes, upload files (direct ≤10MB or presigned URL), list files (`/v1/sandboxes`, `/v1/sandboxes/{sandbox_id}/files`)
+- **What this means:** Full programmatic agent execution. We can trigger duvo agents from MC or scripts, feed them files via sandboxes, interact mid-run, handle approval gates, and retrieve results. Not just data access — this is an orchestration API.
 
 ### Stripe (payments & billing)
 - **Account:** Pavol's Stripe (acct_1NYrlr...)
