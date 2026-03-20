@@ -1,7 +1,8 @@
 #!/bin/bash
-# telegram-send.sh — Send a message to Pavol via Telegram Bot API
+# telegram-send.sh — Send a message via Telegram Bot API
 # Usage: ~/scripts/telegram-send.sh "Your message here"
-# Called by workflow steps to deliver results.
+#        ~/scripts/telegram-send.sh --chat-id 123456789 "Your message here"
+# Called by workflow steps and brief scripts to deliver results.
 
 set -euo pipefail
 
@@ -14,17 +15,24 @@ if [ -z "${PIF_TELEGRAM_TOKEN:-}" ] || [ -z "${PIF_TELEGRAM_USER_ID:-}" ]; then
     PIF_TELEGRAM_USER_ID="${PIF_TELEGRAM_USER_ID:-$(echo "$_TG_JSON" | python3 -c "import sys,json; import re; n=json.load(sys.stdin).get('notes',''); m=re.search(r'\d{5,}', n); print(m.group() if m else '')" 2>/dev/null)}"
 fi
 
+# Parse --chat-id flag
+CHAT_ID="${PIF_TELEGRAM_USER_ID}"
+if [ "${1:-}" = "--chat-id" ]; then
+    CHAT_ID="${2:-}"
+    shift 2
+fi
+
 MESSAGE="${1:-}"
 
 if [ -z "$MESSAGE" ]; then
-    echo "Usage: telegram-send.sh \"message\"" >&2
+    echo "Usage: telegram-send.sh [--chat-id ID] \"message\"" >&2
     exit 1
 fi
 
 # Telegram Bot API sendMessage
 # Try Markdown first, fall back to plain text if parsing fails
 RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${PIF_TELEGRAM_TOKEN}/sendMessage" \
-    -d chat_id="${PIF_TELEGRAM_USER_ID}" \
+    -d chat_id="${CHAT_ID}" \
     -d parse_mode="Markdown" \
     --data-urlencode text="${MESSAGE}")
 
@@ -36,7 +44,7 @@ else
     # Markdown parse failed — retry without parse_mode (plain text)
     echo "Markdown send failed, retrying as plain text..." >&2
     RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${PIF_TELEGRAM_TOKEN}/sendMessage" \
-        -d chat_id="${PIF_TELEGRAM_USER_ID}" \
+        -d chat_id="${CHAT_ID}" \
         --data-urlencode text="${MESSAGE}")
 
     OK=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ok', False))" 2>/dev/null || echo "False")

@@ -1,14 +1,14 @@
 #!/bin/bash
 # evening-standup.sh — End-of-day summary with self-improvement loop
 # Gathers data, runs self-review, summarizes, logs proposals,
-# updates WORKING.md, writes blog post, delivers to Telegram.
-# Replaces workflows/evening-standup.yml — simpler, no antfarm dependency.
+# updates WORKING.md, writes blog post, delivers to configured channel.
 #
-# Schedule: 21:00 CET via Supabase schedules (command field)
-# Usage: ~/scripts/evening-standup.sh
+# Usage: ~/scripts/evening-standup.sh                    # Pif defaults
+#        ~/scripts/evening-standup.sh --brief-id <uuid>  # From briefs table
 
 set -euo pipefail
 source ~/.pif-env
+source ~/scripts/brief-lib.sh
 
 LOG="/root/logs/evening-standup.log"
 TS=$(date '+%Y-%m-%d %H:%M')
@@ -17,66 +17,31 @@ PROMPTS_DIR=~/agents/pif/prompts
 
 log() { echo "${TS} — $1" >> "$LOG"; }
 notify_failure() {
-  ~/scripts/telegram-send.sh "Evening standup failed: $1"
+  deliver_brief "Evening standup failed: $1"
   log "FAILED: $1"
 }
 
-# --- Supabase helpers ---
-sb_get() {
-  local SRK
-  SRK=$(grep 'SUPABASE_SERVICE_KEY=' /etc/mission-control-api.env 2>/dev/null | cut -d= -f2) || SRK="${PIF_SUPABASE_ANON_KEY}"
-  curl -s "${PIF_SUPABASE_URL}/rest/v1/${1}" \
-    -H "apikey: ${SRK}" \
-    -H "Authorization: Bearer ${SRK}" 2>/dev/null
-}
+# --- Parse args ---
+BRIEF_ID=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --brief-id) BRIEF_ID="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
 
-log_event() {
-  local SRK
-  SRK=$(grep 'SUPABASE_SERVICE_KEY=' /etc/mission-control-api.env 2>/dev/null | cut -d= -f2) || SRK="${PIF_SUPABASE_ANON_KEY}"
-  curl -s -X POST "${PIF_SUPABASE_URL}/rest/v1/events" \
-    -H "apikey: ${SRK}" \
-    -H "Authorization: Bearer ${SRK}" \
-    -H "Content-Type: application/json" \
-    -d "{\"type\": \"$1\", \"source\": \"evening-standup\", \"data\": $2, \"tenant_id\": \"c2818981-bcb9-4fde-83d8-272d72c7a3d1\"}" \
-    >/dev/null 2>&1 || true
-}
-
-# ============================================================
-# STEP 1: Gather data
-# ============================================================
-gather_data() {
-  echo "=== TODAY'S NOTE ==="
-  cat ~/memory/daily/${TODAY}.md 2>/dev/null || echo "No events today"
-
-  echo ""
-  echo "=== CURRENT WORKING STATE ==="
-  cat ~/memory/WORKING.md
-
-  echo ""
-  echo "=== RECENT LEARNINGS ==="
-  tail -20 ~/memory/.learnings/LEARNINGS.md 2>/dev/null || echo "None"
-
-  echo ""
-  echo "=== TELEGRAM INTERACTIONS TODAY ==="
-  sqlite3 /root/data/bot.db "
-    SELECT datetime(timestamp) as ts, substr(prompt, 1, 200) as prompt
-    FROM messages
-    WHERE date(timestamp) = date('now')
-    ORDER BY timestamp;
-  " 2>/dev/null || echo "No interactions today"
-
-  echo ""
-  echo "=== TASK OUTCOMES TODAY ==="
-  sb_get "tasks?select=title,status,updated_at&updated_at=gte.${TODAY}T00:00:00Z&order=updated_at.desc" || echo "Could not fetch tasks"
-
-  echo ""
-  echo "=== WORKFLOW RUNS TODAY ==="
-  sb_get "runs?select=workflow_id,status,triggered_by,completed_at&started_at=gte.${TODAY}T00:00:00Z&order=started_at.desc" || echo "Could not fetch runs"
-
-  echo ""
-  echo "=== PREVIOUS IMPROVEMENT PROPOSALS ==="
-  tail -30 ~/memory/improvement-proposals.md 2>/dev/null || echo "No prior proposals"
-}
+# --- Load config ---
+if [ -n "$BRIEF_ID" ]; then
+  load_brief_config "$BRIEF_ID" || { echo "Failed to load brief $BRIEF_ID" >&2; exit 1; }
+  MODEL="${BRIEF_MODEL}"
+  SECTIONS="${BRIEF_SECTIONS}"
+else
+  # Pif defaults
+  MODEL="sonnet"
+  SECTIONS="daily_notes working_state learnings telegram_history tasks workflows events proposals"
+  BRIEF_TENANT_ID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
+  export BRIEF_TENANT_ID
+fi
 
 # ============================================================
 # STEP 2: Self-review (proposals)
@@ -90,7 +55,7 @@ run_self_review() {
 
 Review this data from today:
 
-${DATA}" | env -u CLAUDECODE claude --print --model sonnet
+${DATA}" | env -u CLAUDECODE claude --print --model "$MODEL"
 }
 
 # ============================================================
@@ -100,7 +65,12 @@ run_summarize() {
   local DATA="$1"
   local PROPOSALS="$2"
   local PROMPT
-  PROMPT=$(cat "${PROMPTS_DIR}/evening-summarize.md")
+  # Use custom prompt if provided via brief config, else default
+  if [ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ]; then
+    PROMPT=$(cat "${BRIEF_PROMPT_FILE}")
+  else
+    PROMPT=$(cat "${PROMPTS_DIR}/evening-summarize.md")
+  fi
 
   echo "${PROMPT}
 
@@ -108,7 +78,7 @@ Today's data:
 ${DATA}
 
 Self-improvement proposals from today's review:
-${PROPOSALS}" | env -u CLAUDECODE claude --print --model sonnet
+${PROPOSALS}" | env -u CLAUDECODE claude --print --model "$MODEL"
 }
 
 # ============================================================
@@ -148,7 +118,7 @@ update_working() {
 }
 
 # ============================================================
-# STEP 6: Blog post (independent — failure doesn't block delivery)
+# STEP 6: Blog post (Pif-only, independent, non-blocking)
 # ============================================================
 write_blog_post() {
   local DATA="$1"
@@ -170,49 +140,12 @@ ${DATA}" | env -u CLAUDECODE claude -p --model sonnet --output-format text 2>&1 
 }
 
 # ============================================================
-# STEP 7: Deliver to Telegram
-# ============================================================
-deliver() {
-  local SUMMARY="$1"
-  local TOP_PROPOSAL="$2"
-
-  ~/scripts/telegram-send.sh "Evening standup:
-
-${SUMMARY}"
-
-  if [ -n "$TOP_PROPOSAL" ] && [ "$TOP_PROPOSAL" != "None" ]; then
-    sleep 2
-    ~/scripts/telegram-send.sh "Top proposal: ${TOP_PROPOSAL}
-
-Implement? y/n"
-  fi
-}
-
-# ============================================================
-# Helper: extract KEY: value from Claude output
-# ============================================================
-extract_field() {
-  local OUTPUT="$1"
-  local KEY="$2"
-  # Remove markdown bold, then extract everything after KEY: until the next KEY: or end
-  echo "$OUTPUT" | sed 's/\*\*//g' | python3 -c "
-import sys, re
-text = sys.stdin.read()
-# Find the key
-pattern = r'^${KEY}:\s*(.*?)(?=^[A-Z_]+:|$)'
-m = re.search(pattern, text, re.MULTILINE | re.DOTALL)
-if m:
-    print(m.group(1).strip())
-" 2>/dev/null
-}
-
-# ============================================================
 # MAIN
 # ============================================================
-log "Starting evening standup"
+log "Starting evening standup${BRIEF_ID:+ (brief: ${BRIEF_ID})}"
 
 # Step 1: Gather
-DATA=$(gather_data 2>&1) || {
+DATA=$(gather_sections "$SECTIONS" 2>&1) || {
   notify_failure "data gathering failed"
   exit 1
 }
@@ -237,29 +170,49 @@ TOP_PROPOSAL=$(extract_field "$SUMMARY_OUTPUT" "TOP_PROPOSAL")
 WORKING_UPDATE=$(extract_field "$SUMMARY_OUTPUT" "WORKING_UPDATE")
 log "Summary generated"
 
-# Step 4: Log proposals
-log_proposals "$PROPOSALS" "$PROPOSAL_COUNT"
+# Step 4: Log proposals (Pif-only — skip for other tenants)
+if [ -z "$BRIEF_ID" ]; then
+  log_proposals "$PROPOSALS" "$PROPOSAL_COUNT"
+fi
 
-# Step 5: Update WORKING.md
-update_working "$WORKING_UPDATE"
+# Step 5: Update WORKING.md (Pif-only — skip for other tenants)
+if [ -z "$BRIEF_ID" ]; then
+  update_working "$WORKING_UPDATE"
+fi
 
-# Step 6: Blog post (independent, non-blocking)
-write_blog_post "$DATA" "$SUMMARY" &
-BLOG_PID=$!
-log "Blog post started (pid ${BLOG_PID})"
+# Step 6: Blog post (Pif-only, non-blocking)
+if [ -z "$BRIEF_ID" ]; then
+  write_blog_post "$DATA" "$SUMMARY" &
+  BLOG_PID=$!
+  log "Blog post started (pid ${BLOG_PID})"
+fi
 
-# Step 7: Deliver (don't wait for blog)
-deliver "$SUMMARY" "$TOP_PROPOSAL" || {
+# Step 7: Deliver
+deliver_brief "Evening standup:
+
+${SUMMARY}" || {
   notify_failure "Telegram delivery failed"
 }
 
-# Wait for blog post (with timeout)
-if wait $BLOG_PID 2>/dev/null; then
-  log "Blog post completed"
-else
-  log "Blog post failed or timed out (non-critical)"
+if [ -n "$TOP_PROPOSAL" ] && [ "$TOP_PROPOSAL" != "None" ]; then
+  sleep 2
+  deliver_brief "Top proposal: ${TOP_PROPOSAL}
+
+Implement? y/n" || true
+fi
+
+# Wait for blog post if started
+if [ -n "${BLOG_PID:-}" ]; then
+  if wait $BLOG_PID 2>/dev/null; then
+    log "Blog post completed"
+  else
+    log "Blog post failed or timed out (non-critical)"
+  fi
 fi
 
 # Log success
-log_event "evening_standup_completed" "{\"status\": \"ok\", \"proposals\": ${PROPOSAL_COUNT:-0}}"
+brief_log_event "evening_standup_completed" "evening-standup" "{\"status\": \"ok\", \"proposals\": ${PROPOSAL_COUNT:-0}}"
 log "Evening standup complete"
+
+# Clean up temp prompt file if created
+[ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ] && [[ "${BRIEF_PROMPT_FILE}" == /tmp/brief-prompt-* ]] && rm -f "$BRIEF_PROMPT_FILE"
