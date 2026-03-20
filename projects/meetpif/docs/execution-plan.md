@@ -988,12 +988,11 @@ Replace GOG CLI's separate auth flow with the MC OAuth token. Scripts use the st
 
 ### 2.2 — ~~Onboarding chat~~ **Pulled forward to Phase 0E**
 
-Conversational onboarding chat UI shipped in 0E (2026-03-09, deployed 2026-03-12). Three active steps: Welcome → Personality → Claude Connect. Background intelligence API runs on signup (email domain scrape, web search). Provisioning step polls provision_queue.
+Conversational onboarding chat UI shipped in 0E (2026-03-09, deployed 2026-03-12). Background intelligence API runs on signup (email domain scrape, web search). Provisioning step polls provision_queue.
 
 **Decision (2026-03-15):** Naming step removed. Every instance is "Pif" — no custom naming. Simplifies onboarding and brand consistency.
 
-**Implemented and active:** Welcome, Personality, Claude Connect, Submitting, Provisioning, Provisioned.
-**Built but not wired in:** Telegram deep link (builder exists, not in step flow).
+**Implemented and active:** Welcome → Personality → Claude Connect → Telegram Deep Link → Submitting → Provisioning → Provisioned → Complete.
 **Designed but not built:** Google Workspace OAuth step, First Task victory lap.
 
 Remaining steps to be added as future PRDs.

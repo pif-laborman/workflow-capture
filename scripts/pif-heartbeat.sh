@@ -256,10 +256,12 @@ fi
 # Gather last-hour activity from all sources and append to today's daily note.
 # Pure bash + python — no AI call, just structured facts.
 
-DAILY_NOTE="$HOME/memory/daily/$(date +%Y-%m-%d).md"
+TIMEZONE="${PIF_TIMEZONE:-Europe/Prague}"
+DAILY_NOTE="$HOME/memory/daily/$(TZ="$TIMEZONE" date +%Y-%m-%d).md"
 HOUR_AGO=$(date -u -d '1 hour ago' '+%Y-%m-%d %H:%M:%S')
-HOUR_TAG=$(date '+%H:%M')
+HOUR_TAG=$(TZ="$TIMEZONE" date '+%H:%M')
 
+export PIF_HEARTBEAT_TZ="$TIMEZONE"
 NOTE_LINES=$(python3 << 'PYEOF'
 import json, os, sqlite3, subprocess, sys
 from datetime import datetime, timedelta, timezone
@@ -269,24 +271,55 @@ lines = []
 now = datetime.now(timezone.utc)
 hour_ago = now - timedelta(hours=1)
 hour_ago_iso = hour_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
-hour_ago_local = hour_ago.strftime("%Y-%m-%d %H:%M:%S")
-today_str = datetime.now().strftime("%Y-%m-%d")
 
-# 1. Telegram messages from last hour
+# Use tenant timezone to compute local-date boundary in UTC
+# This prevents writing yesterday's messages into today's daily note
+import subprocess as _tz_sp
+_tz = os.environ.get("PIF_HEARTBEAT_TZ", "UTC")
+_tz_env = {**os.environ, "TZ": _tz}
+_local_date = _tz_sp.run(["date", "+%Y-%m-%d"], capture_output=True, text=True, env=_tz_env).stdout.strip()
+_local_midnight_utc = _tz_sp.run(
+    ["date", "-u", "-d", f"TZ=\"{_tz}\" {_local_date} 00:00:00", "+%Y-%m-%dT%H:%M:%S+00:00"],
+    capture_output=True, text=True
+).stdout.strip()
+
+# Last heartbeat marker — used to avoid re-appending messages from previous heartbeat
+_marker_file = os.path.expanduser("~/.cache/pif-heartbeat-last-ts")
+try:
+    _last_ts = open(_marker_file).read().strip()
+except Exception:
+    _last_ts = hour_ago_iso.replace("Z", "+00:00")
+
+# Use the later of: last heartbeat marker or 1 hour ago
+_cutoff = max(_last_ts, hour_ago.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
+# But never earlier than local midnight (prevents yesterday bleed)
+_cutoff = max(_cutoff, _local_midnight_utc)
+
+# 1. Telegram messages since last heartbeat (no overlap, no yesterday bleed)
 try:
     db = sqlite3.connect(os.path.expanduser("~/data/bot.db"))
     rows = db.execute(
-        "SELECT datetime(timestamp) as ts, substr(prompt, 1, 120) as p "
-        "FROM messages WHERE timestamp >= ? ORDER BY timestamp",
-        (hour_ago_local,)
+        "SELECT timestamp, substr(prompt, 1, 120) as p "
+        "FROM messages WHERE timestamp > ? ORDER BY timestamp",
+        (_cutoff,)
     ).fetchall()
     db.close()
     if rows:
         lines.append("Telegram:")
         for ts, p in rows:
-            # Clean up voice prefix
+            # ts is ISO with tz — extract HH:MM in local time
+            try:
+                from datetime import datetime as _dt
+                _utc_dt = _dt.fromisoformat(ts.replace("+00:00", "+00:00"))
+                # Convert to tenant timezone for display
+                _local_ts = _tz_sp.run(
+                    ["date", "-d", _utc_dt.strftime("%Y-%m-%d %H:%M:%S UTC"), "+%H:%M"],
+                    capture_output=True, text=True, env=_tz_env
+                ).stdout.strip()
+            except Exception:
+                _local_ts = ts[11:16]
             short = p.strip().replace("\n", " ")
-            lines.append(f"  - [{ts[11:16]}] {short}")
+            lines.append(f"  - [{_local_ts}] {short}")
 except Exception:
     pass
 
@@ -377,6 +410,11 @@ try:
                 lines.append(f"  - {e['type'].replace('workflow_', '')} {src}")
 except Exception:
     pass
+
+# Save current timestamp as marker for next heartbeat (dedup)
+os.makedirs(os.path.expanduser("~/.cache"), exist_ok=True)
+with open(os.path.expanduser("~/.cache/pif-heartbeat-last-ts"), "w") as _mf:
+    _mf.write(now.strftime("%Y-%m-%dT%H:%M:%S+00:00"))
 
 if lines:
     print("\n".join(lines))
