@@ -1,8 +1,8 @@
 # Meetpif — Execution Plan
 
 **Created**: 2026-03-07
-**Last updated**: 2026-03-15 (late)
-**Status**: Active — Phases 0A-0E complete + deployed. Phase 3 (monetization) shipped. Multi-tenant automation deployed. Phase 1 (first tenant) next.
+**Last updated**: 2026-03-20
+**Status**: Active — Phases 0A-0E complete + deployed. Phase 3 (monetization) shipped. Briefs migrated from YAML → scripts (2026-03-20). Multi-tenant brief infrastructure live. Connectors (15) shipped. Phase 1 (first tenant) next. Key gap: daily notes + nightly consolidation not multi-tenant ready.
 **Companion**: `spec.md` (product spec), `competitive-landscape.md` (market context)
 
 This is the operational map. Every task, every decision, every dependency. We work through this linearly and update it as we go.
@@ -230,102 +230,76 @@ Core skills are always included. Library skills are opt-in per instance. Pif-onl
 - Users create instance-local skills in `~/.claude/skills/local/` — these take precedence over platform skills of the same name
 - Skill marketplace: users submit skills → Pavol reviews → adds to library tier
 
-### How Workflows Are Managed
+### How Workflows and Briefs Are Managed
 
-Workflows are multi-step automation pipelines (morning briefing, evening standup, nightly consolidation, etc.) executed by `pif-runner.py`.
+The platform has two execution models:
 
-**Two-layer resolution:**
+1. **Briefs** (morning brief, evening standup) — bash scripts + `brief-lib.sh`, configured via Supabase `briefs` table. Per-tenant sections, model, delivery channel, cron. Migrated from YAML workflows (2026-03-20).
+2. **Antfarm workflows** (content factory, feature dev, etc.) — YAML pipelines executed by `pif-runner.py`. For complex multi-step, multi-agent tasks.
 
 ```
-/opt/assistant-platform/workflows/          ← Platform workflows (source of truth)
+/opt/assistant-platform/scripts/            ← Brief scripts (source of truth)
+├── morning-brief.sh                        ← Sources brief-lib.sh, accepts --brief-id
+├── evening-standup.sh                      ← Sources brief-lib.sh, accepts --brief-id
+├── brief-lib.sh                            ← Shared: gatherers, delivery, config loading
+└── brief-dispatcher.sh                     ← Queries briefs table, runs matching briefs
+
+/opt/assistant-platform/workflows/          ← Antfarm workflows (source of truth)
 ├── manifest.json                           ← Registry of all workflows + metadata
-├── morning-brief.yml
-├── evening-standup.yml
 ├── nightly-consolidation.yml
 ├── weekly-review.yml
 ├── content-factory.yml
 ├── inbox-processing.yml
 └── feature-dev.yml                         ← Antfarm-powered workflows
 
-Instance has NO workflow files.             ← Clean separation
-Schedule config lives in Supabase.          ← Per-instance schedules
+Instance has NO workflow or script files.   ← Clean separation
+Brief config lives in Supabase `briefs`.    ← Per-instance brief config
+Schedule config lives in Supabase `schedules`. ← Per-instance workflow schedules
 ```
 
-**How it works:**
+**How briefs work:**
 
-1. **Platform manifest** — `/opt/assistant-platform/workflows/manifest.json` declares all workflows:
-
-```json
-{
-  "workflows": [
-    {
-      "id": "morning-brief",
-      "name": "Morning Brief",
-      "description": "Daily standup delivered to Telegram",
-      "schedule_type": "cron",
-      "default_schedule": "0 7 * * *",
-      "required_services": ["telegram"],
-      "included_by_default": true
-    },
-    {
-      "id": "content-factory",
-      "name": "Content Factory",
-      "description": "Multi-format content pipeline",
-      "schedule_type": "manual",
-      "default_schedule": null,
-      "required_services": [],
-      "included_by_default": false
-    }
-  ]
-}
-```
-
-2. **pif-runner.py refactoring** — The runner resolves workflow paths in order:
-   1. `$PLATFORM_DIR/workflows/{id}.yml` (platform — always checked first)
-   2. Falls back with error if not found (no instance-local workflows in MVP)
-
-```python
-PLATFORM_DIR = Path(os.environ.get("ASSISTANT_PLATFORM_DIR", "/opt/assistant-platform"))
-WORKFLOWS_DIR = PLATFORM_DIR / "workflows"
-```
-
-3. **Per-instance schedules** — Each instance's Supabase `schedules` table controls when workflows run. The workflow logic is the same for everyone; only the timing differs.
+1. **Supabase `briefs` table** — per-tenant brief config:
 
 ```sql
--- Instance's Supabase
-INSERT INTO schedules (workflow_id, cron_expression, enabled)
-VALUES ('morning-brief', '0 8 * * *', true);  -- This user wants briefing at 8am
+-- Seeded at onboarding, disabled until delivery channel connected
+INSERT INTO briefs (tenant_id, name, cron_expression, timezone, model, delivery_channel, delivery_target, sections, enabled)
+VALUES ('...', 'morning', '0 8 * * *', 'Europe/Prague', 'haiku', 'telegram', NULL, '["tasks","workflows","system_health","events"]', false);
 ```
 
-4. **Workflow parameterization** — Workflows reference environment variables, not hardcoded paths. The runner injects instance context:
-   - `$HOME` — instance user's home directory
-   - `$ASSISTANT_NAME` — from branding config
-   - `$TELEGRAM_CHAT_ID` — from instance credentials
-   - `$SUPABASE_URL` — shared (from platform config)
-   - `$TENANT_ID` — per-instance (from `.pif-env`)
+2. **brief-lib.sh** — shared library with:
+   - `load_brief_config()` — loads brief config by UUID from Supabase
+   - `gather_sections()` — runs modular gatherers (`section_tasks`, `section_workflows`, etc.)
+   - `deliver_brief()` — delivery abstraction (telegram with `--chat-id`)
+   - 12 section gatherers, all tenant-scoped via `BRIEF_TENANT_ID`
 
-5. **Update flow** — Pavol edits a workflow YAML in the platform directory. All instances pick it up on next execution (runner reads from platform dir). No restart needed — workflows are read fresh on each run.
+3. **Brief scripts** accept `--brief-id <uuid>` to load config from the `briefs` table. Without it, they fall back to Pif defaults (hardcoded tenant ID, sections, model).
 
-6. **Adding a new workflow:**
-   1. Create `{id}.yml` in `/opt/assistant-platform/workflows/`
-   2. Add entry to `manifest.json`
-   3. Run `/opt/assistant-platform/bin/sync-workflows.sh --all` — inserts default schedule into each instance's Supabase (disabled by default for non-default workflows)
-   4. Enable per-instance via MC settings or direct Supabase update
+4. **brief-dispatcher.sh** — queries `briefs?enabled=eq.true`, checks cron match per timezone, runs matching scripts. One schedule entry runs all tenant briefs.
+
+5. **Pif-only steps** — evening standup has extra steps (proposals, WORKING.md update, daily note summary, blog post) that only run in Pif-default mode (no `--brief-id`). Other tenants get the core gather → summarize → deliver flow.
+
+**How antfarm workflows work:**
+
+1. **Platform manifest** — `/opt/assistant-platform/workflows/manifest.json` declares workflows.
+2. **pif-runner.py** resolves workflow paths from `$PLATFORM_DIR/workflows/`.
+3. **Per-instance schedules** — Supabase `schedules` table controls timing.
+4. **Parameterization** — `$HOME`, `$TENANT_ID`, `$TELEGRAM_CHAT_ID` etc.
 
 **What users CAN'T do (MVP):**
-- Create custom workflows
-- Modify workflow logic
-- Override a platform workflow with a local one
+- Create custom workflows or briefs (custom briefs planned post-MVP)
+- Modify workflow/brief logic
+- Override platform scripts
 
 **What users CAN do:**
-- Enable/disable workflows via their schedules table
-- Change workflow timing (cron expression)
-- Trigger any enabled workflow manually via Telegram or MC
+- Enable/disable briefs + workflows via MC Schedules page
+- Change timing (cron expression)
+- Choose which sections appear in their briefs (future: via Settings UI)
 
 **Future (post-MVP):**
-- Instance-local workflow overrides in `~/workflows/custom/{id}.yml` — takes precedence over platform version
-- User-created workflows in `~/workflows/custom/` — registered in their own Supabase, not the platform manifest
-- Workflow parameter overrides in `~/data/workflow-config.json` — customize gather sources, delivery format, etc. without touching the YAML
+- Custom user-created briefs with custom prompts and sections
+- Instance-local workflow overrides
+- Workflow parameter overrides in `~/data/workflow-config.json`
 
 ### How Scripts Are Managed
 
@@ -386,17 +360,34 @@ Copy (not move — Pif's originals stay for now) operational scripts into `/opt/
 
 | Script | Source | Notes |
 |--------|--------|-------|
-| `heartbeat.sh` | `~/scripts/pif-heartbeat.sh` | Needs parameterization (home dir, service names) |
+| `heartbeat.sh` | `~/scripts/pif-heartbeat.sh` | **Not multi-tenant ready.** Needs parameterization (home dir, service names). Creates daily notes in `~/memory/daily/`. See multi-tenant gaps below. |
 | `pif-runner.py` | `~/scripts/pif-runner.py` | Needs `$HOME` awareness |
-| `telegram-send.sh` | `~/scripts/telegram-send.sh` | Already generic enough |
+| `telegram-send.sh` | `~/scripts/telegram-send.sh` | Multi-tenant ready — supports `--chat-id` flag |
 | `pif-creds.js` | `~/scripts/pif-creds.js` | Rename to `assistant-creds` or keep as-is |
 | `comment-listener.js` | `~/scripts/comment-listener.js` | Needs parameterized Supabase URL |
-| `nightly-consolidation.sh` | `~/scripts/nightly-consolidation.sh` | Needs `$HOME` awareness |
+| `nightly-consolidation.sh` | `~/scripts/nightly-consolidation.sh` | **Not multi-tenant ready.** Operates on Pif's `~/life/` PARA files. See multi-tenant gaps below. |
 | `schedule-checker.sh` | `~/scripts/schedule-checker.sh` | Needs parameterized service names |
-| `morning-brief.sh` | (if standalone) | Or workflow-driven via pif-runner |
+| `morning-brief.sh` | `~/scripts/morning-brief.sh` | Multi-tenant ready — accepts `--brief-id`, loads config from `briefs` table |
+| `evening-standup.sh` | `~/scripts/evening-standup.sh` | Multi-tenant ready — accepts `--brief-id`. Pif-only steps (proposals, WORKING.md, daily note summary, blog) skipped for other tenants |
+| `brief-lib.sh` | `~/scripts/brief-lib.sh` | Shared library — gatherers, delivery, config. Tenant-scoped queries. |
+| `brief-dispatcher.sh` | `~/scripts/brief-dispatcher.sh` | Runs all enabled briefs across tenants. Disabled until multi-tenant activation. |
 | `gog-auth.sh` | `~/scripts/gog-auth.sh` | Phase 2 — not needed for MVP |
 
 **Key refactoring principle**: Every script must resolve paths relative to the calling user's `$HOME`, not hardcoded `/root/`. Environment variables (`$ASSISTANT_HOME`, `$ASSISTANT_NAME`) replace hardcoded paths.
+
+**Multi-tenant gaps (as of 2026-03-20):**
+
+These scripts/features are Pif-specific and need work before other tenants can use them:
+
+| Feature | Current State | What's Needed | Depends On |
+|---------|--------------|---------------|------------|
+| **Daily notes** | Created by heartbeat (`~/memory/daily/YYYY-MM-DD.md`). Assumes local filesystem. | Either: (a) per-instance filesystem if tenants get their own VPS, or (b) Supabase `daily_notes` table if shared platform. Heartbeat needs `$HOME` parameterization. | Instance architecture decision |
+| **Daily note summaries** | Evening standup auto-fills Events/Tasks/Notes sections in daily note (2026-03-20). Pif-only — skipped when running with `--brief-id`. | Extend to other tenants once daily notes have a multi-tenant storage solution. | Daily notes multi-tenant |
+| **Nightly consolidation** | Reads daily notes + session transcripts, extracts durable knowledge into `~/life/` PARA files, syncs auto-memory, rebuilds QMD index. Pif-specific paths. Schedule stays `included_by_default: true` — users should get a solid memory setup out of the box. Script just needs parameterization. | Parameterize for `$HOME`, tenant-scoped daily note paths, tenant-scoped `~/life/` PARA structure, QMD per-tenant index. | Instance architecture decision, daily notes multi-tenant |
+| **Heartbeat** | Pif's heartbeat reads Telegram messages from local `bot.db`, appends to daily notes, commits to git. Hardcoded to Pif's paths and data sources. | Parameterize for `$HOME`, tenant-scoped Telegram DB path, tenant-scoped daily note creation. | Instance architecture decision |
+| **Improvement proposals** | Evening standup logs proposals to `~/memory/improvement-proposals.md`. Pif-only. | Could move to Supabase table for multi-tenant, or stay filesystem per-instance. | Instance architecture decision |
+
+**Key decision needed:** Are tenants getting their own VPS instances (local filesystem works) or sharing the platform (Supabase storage needed)? This determines the approach for all of the above.
 
 **Acceptance**: Scripts in `/opt/assistant-platform/scripts/` are parameterized and can run as any user.
 
@@ -410,12 +401,15 @@ cp ~/workflows/*.yml /opt/assistant-platform/workflows/
 2. Audit each YAML for hardcoded `/root/` paths — replace with `$HOME` or environment variable references.
 
 3. Create `/opt/assistant-platform/workflows/manifest.json`:
+
+**Note (2026-03-20):** Morning brief and evening standup are no longer YAML workflows — they're bash scripts configured via the `briefs` table. They're still in the manifest for schedule seeding but the actual execution uses `morning-brief.sh` / `evening-standup.sh` via the `command` field in `schedules`, not `workflow_id`. Nightly consolidation stays `included_by_default: true` — users should get a solid memory setup from day one. The script needs parameterization for `$HOME` before it'll work for non-Pif tenants.
+
 ```json
 {
   "workflows": [
-    { "id": "morning-brief", "name": "Morning Brief", "schedule_type": "cron", "default_schedule": "0 7 * * *", "required_services": ["telegram"], "included_by_default": true },
-    { "id": "evening-standup", "name": "Evening Standup", "schedule_type": "cron", "default_schedule": "0 21 * * *", "required_services": ["telegram"], "included_by_default": true },
-    { "id": "nightly-consolidation", "name": "Nightly Consolidation", "schedule_type": "cron", "default_schedule": "0 1 * * *", "required_services": [], "included_by_default": true },
+    { "id": "morning-brief", "name": "Morning Brief", "schedule_type": "cron", "default_schedule": "0 7 * * *", "required_services": ["telegram"], "included_by_default": true, "_note": "Executed as bash script via briefs table, not YAML workflow" },
+    { "id": "evening-standup", "name": "Evening Standup", "schedule_type": "cron", "default_schedule": "0 21 * * *", "required_services": ["telegram"], "included_by_default": true, "_note": "Executed as bash script via briefs table, not YAML workflow" },
+    { "id": "nightly-consolidation", "name": "Nightly Consolidation", "schedule_type": "cron", "default_schedule": "0 1 * * *", "required_services": [], "included_by_default": true, "_note": "Script needs $HOME parameterization for multi-tenant" },
     { "id": "weekly-review", "name": "Weekly Review", "schedule_type": "cron", "default_schedule": "0 18 * * 5", "required_services": [], "included_by_default": true },
     { "id": "inbox-processing", "name": "Inbox Processing", "schedule_type": "manual", "default_schedule": null, "required_services": ["gog"], "included_by_default": false },
     { "id": "content-factory", "name": "Content Factory", "schedule_type": "manual", "default_schedule": null, "required_services": [], "included_by_default": false }
@@ -796,9 +790,12 @@ Script that registers a new tenant in Pif's existing Supabase project:
 2. Insert into `tenants` table: `{ id, name, instance_name, owner_email, created_at }`
 3. Seed initial data for the tenant:
    - Default project entry in `projects` (with `tenant_id`)
-   - Default schedules in `schedules` (with `tenant_id`)
+   - Default schedules in `schedules` (with `tenant_id`) — from workflow manifest
+   - Default briefs in `briefs` (with `tenant_id`) — morning + evening, disabled until delivery channel connected
    - Bootstrap credentials in `logins` (with `tenant_id`)
 4. Output the `tenant_id`
+
+**Note (2026-03-20):** Onboarding seeding is implemented in `onboarding-helpers.ts::seedOnboardingDefaults()`. Briefs are seeded disabled with `delivery_target: null` — they activate when the user connects a delivery channel (e.g., Telegram).
 
 **Input**: Instance name, assistant name, owner email.
 **Output**: Tenant UUID.
@@ -958,15 +955,18 @@ Pavol sits with girlfriend (or does via Telegram) and fills in:
 ### 1.5 — Smoke test
 
 - [ ] MC dashboard loads at `https://meetpif.com` (logged in as her email)
-- [ ] Google SSO login works — sees Pif branding, not Pif
+- [ ] Google SSO login works — sees correct branding
 - [ ] Telegram bot responds to messages
 - [ ] Heartbeat fires on schedule
-- [ ] Morning briefing arrives (trigger manually for test)
-- [ ] Evening standup arrives (trigger manually for test)
+- [ ] Morning brief arrives (trigger manually via `morning-brief.sh --brief-id <uuid>`)
+- [ ] Evening standup arrives (trigger manually via `evening-standup.sh --brief-id <uuid>`)
+- [ ] Briefs appear in Schedules page with correct toggle/config
 - [ ] Comment listener creates Claude session on MC comment
 - [ ] QMD search works across her files
 - [ ] Credential vault works
 - [ ] All services survive `systemctl restart`
+- [ ] Daily notes: verify creation mechanism works (depends on heartbeat parameterization)
+- [ ] Nightly consolidation: verify script runs with tenant's `$HOME` paths
 
 ### 1.6 — Hand off
 
