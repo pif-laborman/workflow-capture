@@ -168,26 +168,45 @@ SUMMARY_OUTPUT=$(run_summarize "$DATA" "$PROPOSALS" 2>&1) || {
 SUMMARY=$(extract_field "$SUMMARY_OUTPUT" "SUMMARY")
 TOP_PROPOSAL=$(extract_field "$SUMMARY_OUTPUT" "TOP_PROPOSAL")
 WORKING_UPDATE=$(extract_field "$SUMMARY_OUTPUT" "WORKING_UPDATE")
+DAILY_SUMMARY=$(extract_field "$SUMMARY_OUTPUT" "DAILY_SUMMARY")
 log "Summary generated"
 
-# Step 4: Log proposals (Pif-only — skip for other tenants)
+# Step 4: Update daily note summary (Pif-only)
+if [ -z "$BRIEF_ID" ] && [ -n "$DAILY_SUMMARY" ]; then
+  DAILY_NOTE="$HOME/memory/daily/${TODAY}.md"
+  if [ -f "$DAILY_NOTE" ]; then
+    # Replace the placeholder sections between the title and the first heartbeat entry
+    python3 -c "
+import sys, re
+note = open('$DAILY_NOTE').read()
+# Match from after the title line up to the first heartbeat section
+pattern = r'(# Daily Note — [^\n]*\n)\n## Events\n.*?(?=\n## ~)'
+replacement = r'\1\n' + sys.stdin.read().strip() + '\n'
+updated = re.sub(pattern, replacement, note, count=1, flags=re.DOTALL)
+open('$DAILY_NOTE', 'w').write(updated)
+" <<< "$DAILY_SUMMARY"
+    log "Daily note summary updated"
+  fi
+fi
+
+# Step 5: Log proposals (Pif-only — skip for other tenants)
 if [ -z "$BRIEF_ID" ]; then
   log_proposals "$PROPOSALS" "$PROPOSAL_COUNT"
 fi
 
-# Step 5: Update WORKING.md (Pif-only — skip for other tenants)
+# Step 6: Update WORKING.md (Pif-only — skip for other tenants)
 if [ -z "$BRIEF_ID" ]; then
   update_working "$WORKING_UPDATE"
 fi
 
-# Step 6: Blog post (Pif-only, non-blocking)
+# Step 7: Blog post (Pif-only, non-blocking)
 if [ -z "$BRIEF_ID" ]; then
   write_blog_post "$DATA" "$SUMMARY" &
   BLOG_PID=$!
   log "Blog post started (pid ${BLOG_PID})"
 fi
 
-# Step 7: Deliver
+# Step 8: Deliver
 deliver_brief "Evening standup:
 
 ${SUMMARY}" || {
