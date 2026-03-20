@@ -603,11 +603,11 @@ def run_workflow(workflow_id: str, task: str = "", triggered_by: str = "manual")
 # --- Schedule checker ---
 
 def run_command(schedule_id: str, command: str):
-    """Execute a simple bash command from a schedule. Lightweight — no run/step records."""
+    """Execute a bash command from a schedule. Lightweight — no run/step records."""
     try:
         result = subprocess.run(
             ["bash", "-c", command],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=600,
         )
         success = result.returncode == 0
         output = (result.stdout + result.stderr).strip()
@@ -664,9 +664,32 @@ def check_schedules():
     check_triggers()
 
 
+def _cron_field_matches(field_val: int, cron_val: str) -> bool:
+    """Check if a single cron field matches the current value.
+    Supports: *, literal, */N, N-M, N,M,O and combinations (e.g. 1-5,7)."""
+    if cron_val == "*":
+        return True
+    # Split on comma for lists (e.g. "1,3,5" or "1-5,7")
+    for part in cron_val.split(","):
+        part = part.strip()
+        if "/" in part:
+            base, interval = part.split("/", 1)
+            if field_val % int(interval) == 0:
+                return True
+        elif "-" in part:
+            lo, hi = part.split("-", 1)
+            if int(lo) <= field_val <= int(hi):
+                return True
+        else:
+            if int(part) == field_val:
+                return True
+    return False
+
+
 def should_run_now(cron_expr: str, last_run_at: str | None, now: datetime) -> bool:
     """Simple cron matching — checks if current time matches cron expression.
-    Supports: minute hour day-of-month month day-of-week (standard 5-field)."""
+    Supports: minute hour day-of-month month day-of-week (standard 5-field).
+    Field syntax: *, N, N-M, */N, N,M,O and combinations."""
     parts = cron_expr.strip().split()
     if len(parts) != 5:
         return False
@@ -687,19 +710,8 @@ def should_run_now(cron_expr: str, last_run_at: str | None, now: datetime) -> bo
     for i, (field_val, cron_val) in enumerate(zip(fields, parts)):
         if i == 4:
             field_val = cron_weekday
-        if cron_val == "*":
-            continue
-        try:
-            if int(cron_val) != field_val:
-                return False
-        except ValueError:
-            # Could be */5 or ranges — skip complex patterns for now
-            if "/" in cron_val:
-                base, interval = cron_val.split("/")
-                if field_val % int(interval) != 0:
-                    return False
-            else:
-                return False
+        if not _cron_field_matches(field_val, cron_val):
+            return False
     return True
 
 
