@@ -65,13 +65,13 @@ SUPABASE_HEADERS = {
 }
 
 ROLE_CONFIG = {
-    "analysis":     {"cmd": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus"],
+    "analysis":     {"cmd": ["claude", "-p", "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", "opus"],
                      "user": "ralph", "timeout": 900},
-    "coding":       {"cmd": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus"],
+    "coding":       {"cmd": ["claude", "-p", "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", "opus"],
                      "user": "ralph", "timeout": 1800},
-    "verification": {"cmd": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus"],
+    "verification": {"cmd": ["claude", "-p", "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", "opus"],
                      "user": "ralph", "timeout": 1500},
-    "testing":      {"cmd": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "--model", "opus"],
+    "testing":      {"cmd": ["claude", "-p", "--permission-mode", "bypassPermissions", "--output-format", "json", "--model", "opus"],
                      "user": "ralph", "timeout": 1500},
 }
 
@@ -486,13 +486,16 @@ def handle_retry_step(run: dict, current_step_id: str, step_config: dict,
             f"RETRY EXHAUSTED step={current_step_name} "
             f"retries={retry_count}/{max_retries}"
         )
+        # Preserve the last output so the UI shows what actually failed
+        last_output = context.get(f"{current_step_name}_output", "")
         error_msg = f"Retries exhausted ({retry_count}/{max_retries})"
+        step_output = f"{error_msg}\n\nLast output:\n{last_output[:3000]}" if last_output else error_msg
 
         # Directly mark step + run as failed (bypass CLI failStep which
         # has its own retry counter that conflicts with ours).
         sb_update("antfarm_steps", {"id": current_step_id}, {
             "status": "failed",
-            "output": error_msg,
+            "output": step_output,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
 
