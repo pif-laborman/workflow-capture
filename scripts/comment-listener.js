@@ -2,11 +2,14 @@
 /**
  * comment-listener.js — Realtime listener for task comments.
  *
- * On new non-pif comment: spawns a Claude session that handles everything —
+ * On new non-assistant comment: spawns a Claude session that handles everything —
  * reads context, marks 👀, processes the request, and posts a reply.
  *
  * Boots with the anon key, fetches the service role key from the logins table
  * (encrypted with AES-256-GCM), then creates the real Supabase client.
+ *
+ * Tenant-aware: reads PIF_TENANT_ID and PIF_ASSISTANT_NAME from env (.pif-env).
+ * Each instance only processes comments for its own tenant.
  *
  * Runs as systemd service: comment-listener.service
  */
@@ -14,15 +17,25 @@
 const { createClient } = require('@supabase/supabase-js')
 const { spawn } = require('child_process')
 const crypto = require('crypto')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
 
 const SB_URL = process.env.PIF_SUPABASE_URL
 const SB_ANON_KEY = process.env.PIF_SUPABASE_ANON_KEY
 const CREDS_PASSWORD = process.env.PIF_CREDS_PASSWORD
+const TENANT_ID = process.env.PIF_TENANT_ID
+const ASSISTANT_NAME = process.env.PIF_ASSISTANT_NAME || 'pif'
 const MC_API_TOKEN = process.env.MC_API_TOKEN || ''
 const MC_API_PORT = process.env.API_PORT || '8091'
 
 if (!SB_URL || !SB_ANON_KEY || !CREDS_PASSWORD) {
   console.error('Missing PIF_SUPABASE_URL, PIF_SUPABASE_ANON_KEY, or PIF_CREDS_PASSWORD')
+  process.exit(1)
+}
+
+if (!TENANT_ID) {
+  console.error('Missing PIF_TENANT_ID — cannot start without tenant scope')
   process.exit(1)
 }
 
@@ -53,28 +66,30 @@ function decryptField(encoded, password) {
 }
 
 /**
- * Fetch tenant's connector tokens via the internal MC API endpoint.
- * Returns { connector_tokens: { CONNECTOR_TOKEN_X: "..." } } or null on failure.
+ * Fetch tenant's Claude credentials and connector tokens via the internal MC API endpoint.
+ * Returns { config_dir, connector_tokens } on success, or null on failure.
  */
-async function fetchConnectorTokens() {
-  if (!MC_API_TOKEN) return null
+async function fetchClaudeConfig() {
   try {
+    // HMAC proves this caller is authorized for this specific tenant_id
+    const tenantProof = crypto.createHmac('sha256', MC_API_TOKEN).update(TENANT_ID).digest('hex')
     const res = await fetch(`http://127.0.0.1:${MC_API_PORT}/api/internal/claude-config`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-mc-token': MC_API_TOKEN,
+        'x-mc-tenant-proof': tenantProof,
       },
-      body: JSON.stringify({ tenant_id: process.env.PIF_TENANT_ID }),
+      body: JSON.stringify({ tenant_id: TENANT_ID }),
     })
     const json = await res.json()
-    if (json.status === 'ok' && json.connector_tokens) {
-      return json.connector_tokens
+    if (json.status === 'ok' && json.config_dir) {
+      return { config_dir: json.config_dir, connector_tokens: json.connector_tokens || {} }
     }
-    log(`Connector token fetch: ${json.status} — ${json.error || 'no tokens'}`)
+    log(`Claude config fetch: ${json.status} — ${json.error || 'no config_dir'}`)
     return null
   } catch (err) {
-    log(`Failed to fetch connector tokens: ${err.message}`)
+    log(`Failed to fetch Claude config: ${err.message}`)
     return null
   }
 }
@@ -123,7 +138,8 @@ function postErrorReply(taskId) {
     },
     body: JSON.stringify({
       task_id: taskId,
-      author: 'pif',
+      author: ASSISTANT_NAME,
+      tenant_id: TENANT_ID,
       content: 'Hit an error processing this comment. Check logs or ping me on Telegram.',
     }),
   }).catch(err => log(`Failed to post error reply: ${err.message}`))
@@ -131,7 +147,7 @@ function postErrorReply(taskId) {
 
 function handleComment(payload) {
   const row = payload.new || {}
-  if (!row.task_id || row.author === 'pif') return
+  if (!row.task_id || row.author === ASSISTANT_NAME) return
   enqueue(payload)
 }
 
@@ -154,12 +170,11 @@ Comment: ${content}
 Steps:
 1. Fetch the full task (tasks table, id = '${taskId}') and the comment thread (task_comments table, task_id = '${taskId}', order by created_at asc) from Supabase using MCP.
 2. Mark this comment as seen: update task_comments set seen_at = now() where id = '${commentId}'. This shows the 👀 emoji in the UI. Only do this AFTER you've read the context.
-3. If Pavol is asking you to DO something — do it. You have full tool access.
-4. Post your reply: insert into task_comments (task_id, author, content) values ('${taskId}', 'pif', '<your reply>').
+3. If the user is asking you to DO something — do it. You have full tool access.
+4. Post your reply: insert into task_comments (task_id, author, tenant_id, content) values ('${taskId}', '${ASSISTANT_NAME}', '${TENANT_ID}', '<your reply>').
 5. Format your reply for readability — markdown, bullet points, structure over walls of text.
 6. Do NOT post to task_comments more than once.
-7. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task. The DB trigger skips duplicates within 5 seconds.
-8. NEVER restart comment-listener.service or comment-listener — you ARE running inside it. Restarting it kills your own session mid-work. If you need to restart other services (mission-control-api, nginx, etc.), that's fine. Just not comment-listener.`
+7. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', '${ASSISTANT_NAME}'). Then update the task. The DB trigger skips duplicates within 5 seconds.`
 
   const resumePrompt = `New follow-up comment on the same task.
 
@@ -170,40 +185,98 @@ Comment: ${content}
 Steps:
 1. Mark this comment as seen: update task_comments set seen_at = now() where id = '${commentId}'.
 2. You already have the task context from earlier in this session. If you need to refresh, re-fetch the task and comment thread from Supabase.
-3. If Pavol is asking you to DO something — do it. You have full tool access.
-4. Post your reply: insert into task_comments (task_id, author, content) values ('${taskId}', 'pif', '<your reply>').
+3. If the user is asking you to DO something — do it. You have full tool access.
+4. Post your reply: insert into task_comments (task_id, author, tenant_id, content) values ('${taskId}', '${ASSISTANT_NAME}', '${TENANT_ID}', '<your reply>').
 5. Do NOT post to task_comments more than once.
-6. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task.
-7. NEVER restart comment-listener.service — you ARE running inside it. Restarting it kills your own session.`
+6. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', '${ASSISTANT_NAME}'). Then update the task.`
 
-  const env = { ...process.env }
-  delete env.CLAUDECODE // allow nested sessions
+  // Fetch tenant Claude credentials and connector tokens
+  const config = await fetchClaudeConfig()
+  const connectorTokens = config ? (config.connector_tokens || {}) : {}
+  const configDir = config ? config.config_dir : ''
 
-  // Inject connector tokens as env vars (e.g. CONNECTOR_TOKEN_GOOGLE_CALENDAR=ya29.xxx)
-  const connectorTokens = await fetchConnectorTokens()
-  if (connectorTokens) {
-    for (const [key, value] of Object.entries(connectorTokens)) {
-      env[key] = value
-    }
+  if (config) {
     const tokenCount = Object.keys(connectorTokens).length
     if (tokenCount > 0) {
-      log(`[${taskId.slice(0, 8)}] Injected ${tokenCount} connector token(s) as env vars`)
+      log(`[${taskId.slice(0, 8)}] Fetched ${tokenCount} connector token(s)`)
     }
+  } else {
+    log(`[${taskId.slice(0, 8)}] Warning: no Claude config available — session may fail`)
   }
 
-  const args = [
+  // Build a safe env file — only vars the Claude session needs.
+  // Sensitive vars (MC_API_TOKEN, PIF_CREDS_PASSWORD) are NOT forwarded.
+  const safeEnv = {}
+  const SAFE_PREFIXES = ['PIF_SUPABASE_URL', 'PIF_SUPABASE_ANON_KEY', 'PIF_TENANT_ID',
+    'PIF_ASSISTANT_NAME', 'PIF_TIMEZONE', 'CONNECTOR_TOKEN_', 'CLAUDE_']
+  const SAFE_EXACT = ['PATH', 'LANG', 'TERM']
+  const BLOCK_EXACT = ['CLAUDECODE', 'MC_API_TOKEN', 'PIF_CREDS_PASSWORD',
+    'PIF_SUPABASE_SERVICE_ROLE_KEY']
+
+  for (const [k, v] of Object.entries(process.env)) {
+    if (BLOCK_EXACT.includes(k)) continue
+    if (SAFE_EXACT.includes(k) || SAFE_PREFIXES.some(p => k.startsWith(p))) {
+      safeEnv[k] = v
+    }
+  }
+  // Add connector tokens
+  for (const [k, v] of Object.entries(connectorTokens)) {
+    safeEnv[k] = v
+  }
+  if (configDir) safeEnv.CLAUDE_CONFIG_DIR = configDir
+
+  const callerUser = os.userInfo().username
+  const callerHome = os.homedir()
+  const isAdmin = (callerUser === 'root')
+
+  const claudeArgs = [
     '-p', isResume ? resumePrompt : firstPrompt,
     '--permission-mode', 'dontAsk',
     '--output-format', 'json',
   ]
   if (isResume) {
-    args.push('--resume', existingSessionId)
+    claudeArgs.push('--resume', existingSessionId)
   }
 
-  const child = spawn('claude', args, {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  let child
+  let envFilePath = null
+
+  if (isAdmin) {
+    // Admin tenant — full access, no sandbox. MCP tools need localhost.
+    // Do NOT override CLAUDE_CONFIG_DIR — admin uses its own ~/.claude credentials.
+    // Only inject connector tokens.
+    const env = { ...process.env }
+    delete env.CLAUDECODE
+    for (const [k, v] of Object.entries(connectorTokens)) {
+      env[k] = v
+    }
+    child = spawn('claude', claudeArgs, {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } else {
+    // Tenant user — sandboxed via systemd-run. Only safe env vars forwarded.
+    const envFileName = `.claude-env-${taskId.slice(0, 8)}-${Date.now()}.tmp`
+    envFilePath = path.join(callerHome, envFileName)
+
+    const envLines = Object.entries(safeEnv)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n')
+    fs.writeFileSync(envFilePath, envLines, { mode: 0o600 })
+
+    child = spawn('sudo', [
+      '/usr/local/bin/claude-sandbox-cl', callerUser, envFilePath, '--', ...claudeArgs
+    ], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  }
+
+  // Clean up env file when process exits (only relevant for sandboxed sessions)
+  const cleanupEnvFile = () => {
+    if (envFilePath) {
+      try { fs.unlinkSync(envFilePath) } catch {}
+    }
+  }
 
   // Capture only the tail of stdout — we only need the final JSON line
   let stdoutTail = ''
@@ -214,6 +287,7 @@ Steps:
   child.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-500) })
 
   child.on('close', (code) => {
+    cleanupEnvFile()
     if (code === 0) {
       // Parse session_id from JSON output
       try {
@@ -237,6 +311,7 @@ Steps:
   })
 
   child.on('error', (err) => {
+    cleanupEnvFile()
     log(`[${taskId.slice(0, 8)}] Failed to spawn: ${err.message}`)
     taskSessions.delete(taskId)
     postErrorReply(taskId)
@@ -245,14 +320,25 @@ Steps:
 }
 
 async function init() {
-  log('Fetching service role key via pif-creds...')
+  log(`Starting comment-listener for tenant ${TENANT_ID.slice(0, 8)}... (assistant: ${ASSISTANT_NAME})`)
+  log('Fetching service role key from logins table...')
+
+  // Use anon key + RPC to fetch the service role key (direct table query blocked by RLS for tenants)
+  const anonClient = createClient(SB_URL, SB_ANON_KEY)
+  const { data: rpcData, error: rpcError } = await anonClient
+    .rpc('get_tenant_logins', { p_tenant_id: TENANT_ID })
+
+  const data = (rpcData || []).find(r => r.service_name === 'Supabase')
+
+  if (rpcError || !data) {
+    console.error(`Failed to fetch service role key: ${rpcError?.message || 'no Supabase login for this tenant'}`)
+    process.exit(1)
+  }
 
   try {
-    SB_KEY = require('child_process')
-      .execSync('pif-creds get Supabase', { encoding: 'utf8', timeout: 10000 })
-      .trim()
+    SB_KEY = decryptField(data.encrypted_password, CREDS_PASSWORD)
   } catch (err) {
-    console.error(`Failed to get service role key via pif-creds: ${err.message}`)
+    console.error(`Failed to decrypt service role key: ${err.message}`)
     process.exit(1)
   }
 
@@ -261,70 +347,22 @@ async function init() {
   // Create the real client with the service role key
   supabase = createClient(SB_URL, SB_KEY)
 
-  // --- Recover missed comments ---
-  // Two cases: (1) unseen comments, (2) seen but unanswered (session died mid-work)
+  // --- Recover missed comments (unseen, non-assistant, tenant-scoped) ---
+  // If seen_at is null, it was never processed — respond regardless of age.
   try {
-    // Case 1: Never seen at all
-    const { data: unseen, error: unseenErr } = await supabase
+    const { data: missed, error: missedErr } = await supabase
       .from('task_comments')
       .select('*')
       .is('seen_at', null)
-      .neq('author', 'pif')
+      .eq('tenant_id', TENANT_ID)
+      .neq('author', ASSISTANT_NAME)
       .order('created_at', { ascending: true })
 
-    if (unseenErr) {
-      log(`Warning: failed to check unseen comments: ${unseenErr.message}`)
-    }
-
-    // Case 2: Seen but no pif reply came after — session was killed mid-work.
-    // Check comments from the last 2 hours where seen_at is set but no pif comment
-    // follows on the same task. Uses RPC to avoid complex client-side joins.
-    let unanswered = []
-    try {
-      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-      const { data: recentSeen, error: seenErr } = await supabase
-        .from('task_comments')
-        .select('*')
-        .neq('author', 'pif')
-        .not('seen_at', 'is', null)
-        .gte('created_at', twoHoursAgo)
-        .order('created_at', { ascending: true })
-
-      if (!seenErr && recentSeen) {
-        // Group by task, check if each has a pif reply after it
-        const taskIds = [...new Set(recentSeen.map(c => c.task_id))]
-        for (const tid of taskIds) {
-          const taskComments = recentSeen.filter(c => c.task_id === tid)
-          const lastNonPif = taskComments[taskComments.length - 1]
-          // Check if there's a pif reply after this comment
-          const { data: pifReplies } = await supabase
-            .from('task_comments')
-            .select('id')
-            .eq('task_id', tid)
-            .eq('author', 'pif')
-            .gt('created_at', lastNonPif.created_at)
-            .limit(1)
-          if (!pifReplies || pifReplies.length === 0) {
-            unanswered.push(lastNonPif)
-          }
-        }
-      }
-    } catch (err) {
-      log(`Warning: unanswered-comment check failed: ${err.message}`)
-    }
-
-    const missed = [...(unseen || []), ...unanswered]
-    // Deduplicate by comment ID
-    const seen = new Set()
-    const deduped = missed.filter(c => {
-      if (seen.has(c.id)) return false
-      seen.add(c.id)
-      return true
-    })
-
-    if (deduped.length > 0) {
-      log(`Recovering ${deduped.length} missed comment(s) from before restart`)
-      for (const row of deduped) {
+    if (missedErr) {
+      log(`Warning: failed to check missed comments: ${missedErr.message}`)
+    } else if (missed && missed.length > 0) {
+      log(`Recovering ${missed.length} missed comment(s) from before restart`)
+      for (const row of missed) {
         enqueue({ new: row })
       }
     } else {
@@ -334,13 +372,14 @@ async function init() {
     log(`Warning: missed-comment recovery failed: ${err.message}`)
   }
 
-  // --- Subscribe to realtime (new comments going forward) ---
+  // --- Subscribe to realtime (new comments going forward, tenant-scoped) ---
   const channel = supabase
     .channel('comment-listener')
     .on('postgres_changes', {
       event: 'INSERT',
       schema: 'public',
       table: 'task_comments',
+      filter: `tenant_id=eq.${TENANT_ID}`,
     }, handleComment)
     .subscribe((status) => {
       log(`Realtime subscription: ${status}`)
