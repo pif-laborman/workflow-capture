@@ -5,7 +5,7 @@ You prepare the development environment. You create an isolated git worktree for
 ## Your Process
 
 1. `cd {{repo}}`
-2. `git fetch origin && git pull origin main`
+2. `git fetch origin && git pull origin main && git checkout HEAD -- .`
 3. **Create an isolated worktree** (so concurrent runs don't conflict):
    ```bash
    # Clean up stale branch if a previous run crashed
