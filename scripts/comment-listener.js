@@ -18,6 +18,8 @@ const crypto = require('crypto')
 const SB_URL = process.env.PIF_SUPABASE_URL
 const SB_ANON_KEY = process.env.PIF_SUPABASE_ANON_KEY
 const CREDS_PASSWORD = process.env.PIF_CREDS_PASSWORD
+const MC_API_TOKEN = process.env.MC_API_TOKEN || ''
+const MC_API_PORT = process.env.API_PORT || '8091'
 
 if (!SB_URL || !SB_ANON_KEY || !CREDS_PASSWORD) {
   console.error('Missing PIF_SUPABASE_URL, PIF_SUPABASE_ANON_KEY, or PIF_CREDS_PASSWORD')
@@ -48,6 +50,33 @@ function decryptField(encoded, password) {
   let decrypted = decipher.update(encrypted, null, 'utf8')
   decrypted += decipher.final('utf8')
   return decrypted
+}
+
+/**
+ * Fetch tenant's connector tokens via the internal MC API endpoint.
+ * Returns { connector_tokens: { CONNECTOR_TOKEN_X: "..." } } or null on failure.
+ */
+async function fetchConnectorTokens() {
+  if (!MC_API_TOKEN) return null
+  try {
+    const res = await fetch(`http://127.0.0.1:${MC_API_PORT}/api/internal/claude-config`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-mc-token': MC_API_TOKEN,
+      },
+      body: JSON.stringify({ tenant_id: process.env.PIF_TENANT_ID }),
+    })
+    const json = await res.json()
+    if (json.status === 'ok' && json.connector_tokens) {
+      return json.connector_tokens
+    }
+    log(`Connector token fetch: ${json.status} — ${json.error || 'no tokens'}`)
+    return null
+  } catch (err) {
+    log(`Failed to fetch connector tokens: ${err.message}`)
+    return null
+  }
 }
 
 let SB_KEY // service role key — set during init
@@ -106,7 +135,7 @@ function handleComment(payload) {
   enqueue(payload)
 }
 
-function spawnSession(payload) {
+async function spawnSession(payload) {
   const { id: commentId, task_id: taskId, author, content } = payload.new || {}
 
   const existingSessionId = taskSessions.get(taskId)
@@ -129,7 +158,8 @@ Steps:
 4. Post your reply: insert into task_comments (task_id, author, content) values ('${taskId}', 'pif', '<your reply>').
 5. Format your reply for readability — markdown, bullet points, structure over walls of text.
 6. Do NOT post to task_comments more than once.
-7. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task. The DB trigger skips duplicates within 5 seconds.`
+7. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task. The DB trigger skips duplicates within 5 seconds.
+8. NEVER restart comment-listener.service or comment-listener — you ARE running inside it. Restarting it kills your own session mid-work. If you need to restart other services (mission-control-api, nginx, etc.), that's fine. Just not comment-listener.`
 
   const resumePrompt = `New follow-up comment on the same task.
 
@@ -143,10 +173,23 @@ Steps:
 3. If Pavol is asking you to DO something — do it. You have full tool access.
 4. Post your reply: insert into task_comments (task_id, author, content) values ('${taskId}', 'pif', '<your reply>').
 5. Do NOT post to task_comments more than once.
-6. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task.`
+6. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', 'pif'). Then update the task.
+7. NEVER restart comment-listener.service — you ARE running inside it. Restarting it kills your own session.`
 
   const env = { ...process.env }
   delete env.CLAUDECODE // allow nested sessions
+
+  // Inject connector tokens as env vars (e.g. CONNECTOR_TOKEN_GOOGLE_CALENDAR=ya29.xxx)
+  const connectorTokens = await fetchConnectorTokens()
+  if (connectorTokens) {
+    for (const [key, value] of Object.entries(connectorTokens)) {
+      env[key] = value
+    }
+    const tokenCount = Object.keys(connectorTokens).length
+    if (tokenCount > 0) {
+      log(`[${taskId.slice(0, 8)}] Injected ${tokenCount} connector token(s) as env vars`)
+    }
+  }
 
   const args = [
     '-p', isResume ? resumePrompt : firstPrompt,
@@ -218,21 +261,70 @@ async function init() {
   // Create the real client with the service role key
   supabase = createClient(SB_URL, SB_KEY)
 
-  // --- Recover missed comments (unseen, non-pif, no time limit) ---
-  // If seen_at is null, it was never processed — respond regardless of age.
+  // --- Recover missed comments ---
+  // Two cases: (1) unseen comments, (2) seen but unanswered (session died mid-work)
   try {
-    const { data: missed, error: missedErr } = await supabase
+    // Case 1: Never seen at all
+    const { data: unseen, error: unseenErr } = await supabase
       .from('task_comments')
       .select('*')
       .is('seen_at', null)
       .neq('author', 'pif')
       .order('created_at', { ascending: true })
 
-    if (missedErr) {
-      log(`Warning: failed to check missed comments: ${missedErr.message}`)
-    } else if (missed && missed.length > 0) {
-      log(`Recovering ${missed.length} missed comment(s) from before restart`)
-      for (const row of missed) {
+    if (unseenErr) {
+      log(`Warning: failed to check unseen comments: ${unseenErr.message}`)
+    }
+
+    // Case 2: Seen but no pif reply came after — session was killed mid-work.
+    // Check comments from the last 2 hours where seen_at is set but no pif comment
+    // follows on the same task. Uses RPC to avoid complex client-side joins.
+    let unanswered = []
+    try {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+      const { data: recentSeen, error: seenErr } = await supabase
+        .from('task_comments')
+        .select('*')
+        .neq('author', 'pif')
+        .not('seen_at', 'is', null)
+        .gte('created_at', twoHoursAgo)
+        .order('created_at', { ascending: true })
+
+      if (!seenErr && recentSeen) {
+        // Group by task, check if each has a pif reply after it
+        const taskIds = [...new Set(recentSeen.map(c => c.task_id))]
+        for (const tid of taskIds) {
+          const taskComments = recentSeen.filter(c => c.task_id === tid)
+          const lastNonPif = taskComments[taskComments.length - 1]
+          // Check if there's a pif reply after this comment
+          const { data: pifReplies } = await supabase
+            .from('task_comments')
+            .select('id')
+            .eq('task_id', tid)
+            .eq('author', 'pif')
+            .gt('created_at', lastNonPif.created_at)
+            .limit(1)
+          if (!pifReplies || pifReplies.length === 0) {
+            unanswered.push(lastNonPif)
+          }
+        }
+      }
+    } catch (err) {
+      log(`Warning: unanswered-comment check failed: ${err.message}`)
+    }
+
+    const missed = [...(unseen || []), ...unanswered]
+    // Deduplicate by comment ID
+    const seen = new Set()
+    const deduped = missed.filter(c => {
+      if (seen.has(c.id)) return false
+      seen.add(c.id)
+      return true
+    })
+
+    if (deduped.length > 0) {
+      log(`Recovering ${deduped.length} missed comment(s) from before restart`)
+      for (const row of deduped) {
         enqueue({ new: row })
       }
     } else {
