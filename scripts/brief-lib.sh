@@ -3,7 +3,7 @@
 # Source this file, don't execute it directly.
 #
 # Provides: sb_get, sb_post, log_event, load_brief_config, deliver_brief,
-#           extract_field, and modular section gatherers.
+#           extract_field, share_file, and modular section gatherers.
 
 # Guard against direct execution
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && { echo "Source this file, don't run it." >&2; exit 1; }
@@ -33,6 +33,29 @@ sb_post() {
     -H "Content-Type: application/json" \
     -H "Prefer: return=representation" \
     -d "$DATA" 2>/dev/null
+}
+
+# --- File sharing ---
+# Usage: share_file <local_path>
+# Returns: public Supabase URL for the file (or empty on failure)
+_MC_TOKEN=""
+_mc_token() {
+  if [ -z "$_MC_TOKEN" ]; then
+    _MC_TOKEN=$(grep 'MC_API_TOKEN=' /etc/mission-control-api.env 2>/dev/null | cut -d= -f2)
+  fi
+  echo "$_MC_TOKEN"
+}
+
+share_file() {
+  local FILE_PATH="$1"
+  local TOKEN; TOKEN=$(_mc_token)
+  if [ -z "$TOKEN" ]; then
+    echo "" >&2
+    return 1
+  fi
+  curl -s -X POST "http://localhost:8091/api/fs/share?path=${FILE_PATH}" \
+    -H "x-mc-token: ${TOKEN}" 2>/dev/null \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('url',''))" 2>/dev/null
 }
 
 # --- Event logging ---
