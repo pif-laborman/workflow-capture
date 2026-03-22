@@ -175,14 +175,12 @@ counts = {}
 for t in tasks:
     s = t.get('status','unknown')
     counts[s] = counts.get(s, 0) + 1
-print('Status breakdown:')
-for s in ['todo','in_progress','review','backlog','done']:
+print('By status:')
+for s in ['todo','in_progress','review','blocked','backlog','done']:
     if s in counts:
         print(f'  {s}: {counts[s]}')
 total = len(tasks)
-done = counts.get('done', 0)
-active = total - done
-print(f'Active: {active} | Total: {total}')
+print(f'Total: {total}')
 week_ago = datetime.now(timezone.utc) - timedelta(days=7)
 done_this_week = sum(1 for t in tasks if t.get('status')=='done' and t.get('updated_at') and datetime.fromisoformat(t['updated_at']) > week_ago)
 created_this_week = sum(1 for t in tasks if t.get('created_at') and datetime.fromisoformat(t['created_at']) > week_ago)

@@ -49,7 +49,8 @@ fi
 log "Starting morning brief${BRIEF_ID:+ (brief: ${BRIEF_ID})}"
 
 # Gather
-DATA=$(gather_sections "$SECTIONS" 2>&1) || {
+DATA="Data collected at: $(TZ="${BRIEF_TIMEZONE:-UTC}" date '+%Y-%m-%d %H:%M %Z')
+$(gather_sections "$SECTIONS" 2>&1)" || {
   notify_failure "data gathering failed"
   exit 1
 }
