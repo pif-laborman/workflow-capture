@@ -181,9 +181,12 @@ def antfarm_peek(agent_id: str) -> bool:
     return "HAS_WORK" in r.stdout
 
 
-def antfarm_claim(agent_id: str) -> dict | None:
+def antfarm_claim(agent_id: str, run_id: str | None = None) -> dict | None:
+    cmd = ["antfarm", "step", "claim", agent_id]
+    if run_id:
+        cmd.extend(["--run-id", run_id])
     r = subprocess.run(
-        ["antfarm", "step", "claim", agent_id],
+        cmd,
         capture_output=True, text=True, timeout=30,
     )
     if "NO_WORK" in r.stdout:
@@ -824,12 +827,19 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
             if not antfarm_peek(agent_id):
                 continue
 
-            claim = antfarm_claim(agent_id)
+            claim = antfarm_claim(agent_id, run_id)
             if not claim:
                 continue
 
             step_id = claim["stepId"]
             task_input = claim["input"]
+            claimed_run_id = claim.get("runId", run_id)
+            if claimed_run_id != run_id:
+                log.warning(
+                    f"CLAIM MISMATCH: expected run={run_id[:8]} got run={claimed_run_id[:8]} "
+                    f"step={step_id} agent={agent_id} — skipping"
+                )
+                continue
             log.info(f"CLAIMED step={step_id} agent={agent_id} run={run_id[:8]}")
 
             prompt = build_prompt(agent_name, task_input)
