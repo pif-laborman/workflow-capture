@@ -131,7 +131,7 @@ STATUS: done
 PATTERNS: <key patterns observed>
 PROMOTE: <learnings to promote to MEMORY.md, or \"none\">
 MEMORY_UPDATE: <updated MEMORY.md content, keep under 200 lines>
-WEEKLY_SUMMARY: <concise summary, 10-15 lines>
+WEEKLY_SUMMARY: <concise summary, 10-15 lines. Use Telegram HTML: <b>bold</b> for headers, <i>italic</i> for emphasis. No Markdown asterisks.>
 
 Do NOT add any preamble, greeting, or commentary before \"STATUS: done\".
 
