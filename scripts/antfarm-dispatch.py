@@ -812,6 +812,19 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
             context = json.loads(context)
         repo = context.get("worktree_path") or context.get("repo", "")
 
+        # Safety check: worktree must not equal original repo (cross-run contamination)
+        original_repo = context.get("original_repo", "")
+        if original_repo and repo and os.path.realpath(repo) == os.path.realpath(original_repo):
+            log.error(
+                f"WORKTREE SAFETY: run={run_id[:8]} worktree_path equals original_repo "
+                f"({repo}) — refusing to dispatch. Setup likely failed to create worktree."
+            )
+            sb_update("antfarm_runs", {"id": run_id}, {
+                "status": "failed",
+                "error": "Worktree not isolated: worktree_path equals original_repo",
+            })
+            continue
+
         try:
             wf = load_workflow(workflow_id)
         except FileNotFoundError:

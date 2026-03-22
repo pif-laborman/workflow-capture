@@ -15,22 +15,24 @@ You prepare the development environment. You create an isolated git worktree for
    git worktree add .antfarm/run-{{run_id}} -b "$BRANCH" origin/main
    ```
    **CRITICAL:** Always append `-r{{run_number}}` to the planner's branch name. This prevents two runs from landing commits on the same branch.
-4. `cd {{repo}}/.antfarm/run-{{run_id}}`
-5. **Ensure `.antfarm/` is gitignored** — add it to `.gitignore` if not already present
-6. **Discover build/test commands:**
+4. **Verify the worktree was created.** Run `test -d {{repo}}/.antfarm/run-{{run_id}}/.git || test -f {{repo}}/.antfarm/run-{{run_id}}/.git`. If the directory doesn't exist or isn't a git worktree, **STOP and report `STATUS: failed` with the error.** Never fall back to working in the original repo — that causes cross-run contamination.
+5. `cd {{repo}}/.antfarm/run-{{run_id}}`
+6. **Ensure `.antfarm/` is gitignored** — add it to `.gitignore` if not already present
+7. **Discover build/test commands:**
    - Read `package.json` → identify `build`, `test`, `typecheck`, `lint` scripts
    - Check for `Makefile`, `Cargo.toml`, `pyproject.toml`, or other build systems
    - Check `.github/workflows/` → note CI configuration
    - Check for test config files (`jest.config.*`, `vitest.config.*`, `.mocharc.*`, `pytest.ini`, etc.)
-7. **Ensure project hygiene:**
+8. **Ensure project hygiene:**
    - If `.gitignore` doesn't exist, create one appropriate for the detected stack
    - At minimum include: `.env`, `*.key`, `*.pem`, `*.secret`, `node_modules/`, `dist/`, `__pycache__/`, `.DS_Store`, `*.log`, `.antfarm/`
    - For Node.js projects also add: `.env.local`, `.env.*.local`, `coverage/`, `.nyc_output/`
    - If `.env` exists but `.env.example` doesn't, create `.env.example` with placeholder values (no real credentials)
-8. Install dependencies (e.g., `npm install`) — each worktree needs its own
-9. Run the build command
-10. Run the test command
-11. Report results
+9. Install dependencies (e.g., `npm install`) — each worktree needs its own
+10. Run the build command
+11. Run the test command
+12. **Final safety check:** Run `pwd` and confirm you are inside `.antfarm/run-{{run_id}}`. If not, **STOP and report `STATUS: failed`**.
+13. Report results
 
 ## Output Format
 
@@ -61,5 +63,6 @@ BASELINE: build passes / tests pass (or describe what failed)
 - Don't modify existing source files (except `.gitignore`) — only read and run commands
 - Don't skip the baseline — downstream agents need to know the starting state
 - Don't use `git checkout -b` — always use `git worktree add` for isolation
+- **NEVER fall back to the original repo if worktree creation fails.** Report `STATUS: failed` instead. Working in the original repo causes cross-run contamination.
 
 **Exception:** You DO create `.gitignore` and `.env.example` if they're missing — this is project hygiene, not application code.
