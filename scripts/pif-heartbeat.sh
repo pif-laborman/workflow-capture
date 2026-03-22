@@ -24,16 +24,22 @@ notify() {
     ~/scripts/telegram-send.sh "$1"
 }
 
-# ─── Kill stale heartbeat processes ──────────────────────────────────
-# Previous runs may have hung. Kill any heartbeat claude processes older than 30 min.
-STALE_PIDS=$(pgrep -f "pif-heartbeat" -d ' ' | tr ' ' '\n' | grep -v "^$$\$" || true)
+# ─── Kill stale claude processes ─────────────────────────────────────
+# Previous Stage 2 runs may have hung (V8 busy-spin after completing work).
+# Match actual claude/node processes owned by current user, not the script name.
+STALE_PIDS=$(pgrep -u "$(id -u)" -f "claude" -d ' ' 2>/dev/null | tr ' ' '\n' | grep -v "^$$\$" || true)
 if [ -n "$STALE_PIDS" ]; then
     for pid in $STALE_PIDS; do
-        # Check if process is older than 30 minutes
         if [ -d "/proc/$pid" ]; then
             AGE_SEC=$(( $(date +%s) - $(stat -c %Y /proc/$pid) ))
             if [ "$AGE_SEC" -gt 1800 ]; then
-                kill -9 "$pid" 2>/dev/null && log "Killed stale heartbeat process $pid (age: ${AGE_SEC}s)"
+                log "Killing stale claude process $pid (age: ${AGE_SEC}s)"
+                kill "$pid" 2>/dev/null || true
+                sleep 5
+                # Force kill if still alive
+                if [ -d "/proc/$pid" ]; then
+                    kill -9 "$pid" 2>/dev/null && log "Force-killed $pid (ignored SIGTERM)"
+                fi
                 # Also kill any child processes
                 pkill -9 -P "$pid" 2>/dev/null || true
             fi
@@ -444,14 +450,23 @@ TASK_TITLE=$(python3 -c "import sys,json; print(json.loads(sys.stdin.read())['ta
 
 log "Stage 2: Spawning full Pif session for task '${TASK_TITLE}'"
 
-# No timeout — stale process cleanup at top of script handles hangs (>30 min)
-claude \
+STAGE2_TIMEOUT=1800  # 30 minutes max
+
+timeout "${STAGE2_TIMEOUT}s" claude \
   -p "Heartbeat triggered. Haiku triage found a task you can work on: '${TASK_TITLE}'. Check the task queue in Supabase and work through what you can. Follow your normal autonomy boundaries from SOUL.md." \
   --permission-mode dontAsk \
   --no-session-persistence \
   >>"$LOG" 2>&1 || {
-    log "ERROR: Pif session failed (exit $?)"
-    notify "Pif Heartbeat: Session failed on task '${TASK_TITLE}'. Check logs."
+    EXIT_CODE=$?
+    if [ "$EXIT_CODE" -eq 124 ]; then
+        log "ERROR: Stage 2 timed out after ${STAGE2_TIMEOUT}s on task '${TASK_TITLE}'"
+        notify "Pif Heartbeat: Stage 2 timed out (${STAGE2_TIMEOUT}s) on '${TASK_TITLE}'. Killing."
+        # timeout -s TERM already sent; force-kill any lingering children
+        pkill -9 -P $! 2>/dev/null || true
+    else
+        log "ERROR: Pif session failed (exit $EXIT_CODE)"
+        notify "Pif Heartbeat: Session failed on task '${TASK_TITLE}'. Check logs."
+    fi
     exit 1
 }
 
