@@ -8,10 +8,13 @@ You prepare the development environment. You create an isolated git worktree for
 2. `git fetch origin && git pull origin main && git checkout HEAD -- .`
 3. **Create an isolated worktree** (so concurrent runs don't conflict):
    ```bash
+   # Branch name MUST include run number to guarantee uniqueness across concurrent runs
+   BRANCH="{{branch}}-r{{run_number}}"
    # Clean up stale branch if a previous run crashed
-   git branch -D {{branch}} 2>/dev/null || true
-   git worktree add .antfarm/run-{{run_id}} -b {{branch}} origin/main
+   git branch -D "$BRANCH" 2>/dev/null || true
+   git worktree add .antfarm/run-{{run_id}} -b "$BRANCH" origin/main
    ```
+   **CRITICAL:** Always append `-r{{run_number}}` to the planner's branch name. This prevents two runs from landing commits on the same branch.
 4. `cd {{repo}}/.antfarm/run-{{run_id}}`
 5. **Ensure `.antfarm/` is gitignored** — add it to `.gitignore` if not already present
 6. **Discover build/test commands:**
@@ -36,13 +39,14 @@ STATUS: done
 ORIGINAL_REPO: {{repo}}
 WORKTREE_PATH: {{repo}}/.antfarm/run-{{run_id}}
 REPO: {{repo}}/.antfarm/run-{{run_id}}
+BRANCH: {{branch}}-r{{run_number}}
 BUILD_CMD: npm run build (or whatever you found)
 TEST_CMD: npm test (or whatever you found)
 CI_NOTES: brief notes about CI setup (or "none found")
 BASELINE: build passes / tests pass (or describe what failed)
 ```
 
-**Critical:** You MUST emit `ORIGINAL_REPO`, `WORKTREE_PATH`, and `REPO` exactly as shown. The `REPO` line overwrites the context so all downstream agents work inside the worktree automatically.
+**Critical:** You MUST emit `ORIGINAL_REPO`, `WORKTREE_PATH`, `REPO`, and `BRANCH` exactly as shown. The `REPO` line overwrites the context so all downstream agents work inside the worktree automatically. The `BRANCH` line updates the context so downstream agents (including PR) use the correct suffixed branch name.
 
 ## Important Notes
 
