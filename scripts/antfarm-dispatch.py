@@ -714,6 +714,66 @@ def cleanup_worktree(context: dict):
         log.error(f"Worktree cleanup failed: {e}")
 
 
+def prune_stale_worktrees():
+    """Remove worktree dirs whose runs are no longer running.
+
+    Scans all .antfarm/run-<uuid>* dirs, extracts the run UUID,
+    checks DB status, and removes if not 'running'.
+    """
+    import glob as _glob
+
+    antfarm_dirs = _glob.glob("/opt/assistant-platform/.antfarm/run-*")
+    if not antfarm_dirs:
+        return
+
+    # Extract unique run UUIDs from dir names (run-<uuid> or run-<uuid>-suffix)
+    uuid_re = re.compile(r"run-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+    dirs_by_run: dict[str, list[str]] = {}
+    for d in antfarm_dirs:
+        m = uuid_re.search(d)
+        if m:
+            dirs_by_run.setdefault(m.group(1), []).append(d)
+
+    if not dirs_by_run:
+        return
+
+    # Batch-check which runs are still active
+    run_ids = list(dirs_by_run.keys())
+    try:
+        active_runs = sb_select("antfarm_runs", {
+            "id": f"in.({','.join(run_ids)})",
+            "status": "eq.running",
+            "select": "id",
+        })
+        active_ids = {r["id"] for r in active_runs}
+    except Exception as e:
+        log.error(f"Stale worktree check failed: {e}")
+        return
+
+    repo = "/opt/assistant-platform"
+    for run_id, dirs in dirs_by_run.items():
+        if run_id in active_ids:
+            continue
+        for d in dirs:
+            try:
+                subprocess.run(
+                    ["git", "-C", repo, "worktree", "remove", "--force", d],
+                    capture_output=True, text=True, timeout=30,
+                )
+                log.info(f"Pruned stale worktree: {d}")
+            except Exception as e:
+                log.error(f"Stale worktree prune failed for {d}: {e}")
+
+    # Also prune git's internal worktree bookkeeping
+    try:
+        subprocess.run(
+            ["git", "-C", repo, "worktree", "prune"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        pass
+
+
 # --- Main dispatch ---
 
 def close_stale_runs():
@@ -790,6 +850,7 @@ def close_stale_runs():
 
 def dispatch_once(run_id_filter: str | None = None) -> int:
     """Single dispatch pass. Returns number of steps dispatched."""
+    prune_stale_worktrees()
     params = {"status": "eq.running"}
     if run_id_filter:
         params["id"] = f"eq.{run_id_filter}"
