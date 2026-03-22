@@ -33,7 +33,7 @@ fi
 # Try Markdown first, fall back to plain text if parsing fails
 RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${PIF_TELEGRAM_TOKEN}/sendMessage" \
     -d chat_id="${CHAT_ID}" \
-    -d parse_mode="Markdown" \
+    -d parse_mode="HTML" \
     --data-urlencode text="${MESSAGE}")
 
 OK=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ok', False))" 2>/dev/null || echo "False")
@@ -41,8 +41,8 @@ OK=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).
 if [ "$OK" = "True" ]; then
     echo "Message sent successfully"
 else
-    # Markdown parse failed — retry without parse_mode (plain text)
-    echo "Markdown send failed, retrying as plain text..." >&2
+    # HTML parse failed — retry without parse_mode (plain text)
+    echo "HTML send failed, retrying as plain text..." >&2
     RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${PIF_TELEGRAM_TOKEN}/sendMessage" \
         -d chat_id="${CHAT_ID}" \
         --data-urlencode text="${MESSAGE}")
