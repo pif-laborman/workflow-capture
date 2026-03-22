@@ -83,14 +83,14 @@ if not rows:
     print('ERROR: Brief not found')
     sys.exit(1)
 b = rows[0]
-print(f'BRIEF_NAME={b[\"name\"]}')
-print(f'BRIEF_MODEL={b[\"model\"]}')
-print(f'BRIEF_DELIVERY_CHANNEL={b.get(\"delivery_channel\",\"telegram\")}')
-print(f'BRIEF_DELIVERY_TARGET={b.get(\"delivery_target\",\"\")}')
+print(f'BRIEF_NAME=\"{b[\"name\"]}\"')
+print(f'BRIEF_MODEL=\"{b[\"model\"]}\"')
+print(f'BRIEF_DELIVERY_CHANNEL=\"{b.get(\"delivery_channel\",\"telegram\")}\"')
+print(f'BRIEF_DELIVERY_TARGET=\"{b.get(\"delivery_target\",\"\")}\"')
 sections = b.get('sections', [])
-print(f'BRIEF_SECTIONS={\" \".join(sections)}')
-print(f'BRIEF_TIMEZONE={b.get(\"timezone\",\"UTC\")}')
-print(f'BRIEF_TENANT_ID={b[\"tenant_id\"]}')
+print(f'BRIEF_SECTIONS=\"{\" \".join(sections)}\"')
+print(f'BRIEF_TIMEZONE=\"{b.get(\"timezone\",\"UTC\")}\"')
+print(f'BRIEF_TENANT_ID=\"{b[\"tenant_id\"]}\"')
 prompt = b.get('prompt') or ''
 # Prompt can be multiline — write to temp file
 if prompt:

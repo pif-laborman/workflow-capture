@@ -78,6 +78,12 @@ for b in briefs:
     evening*)
       SCRIPT=~/scripts/evening-standup.sh
       ;;
+    weekly*)
+      SCRIPT=~/scripts/weekly-review.sh
+      ;;
+    nightly*)
+      SCRIPT=~/scripts/nightly-consolidation.sh
+      ;;
     *)
       # Custom briefs default to morning-brief style (gather + summarize + deliver)
       SCRIPT=~/scripts/morning-brief.sh

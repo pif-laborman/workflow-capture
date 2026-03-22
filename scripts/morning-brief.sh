@@ -80,4 +80,4 @@ brief_log_event "morning_brief_completed" "morning-brief" "{\"status\": \"ok\"}"
 log "Morning brief delivered"
 
 # Clean up temp prompt file if created
-[ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ] && [[ "${BRIEF_PROMPT_FILE}" == /tmp/brief-prompt-* ]] && rm -f "$BRIEF_PROMPT_FILE"
+if [ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ] && [[ "${BRIEF_PROMPT_FILE}" == /tmp/brief-prompt-* ]]; then rm -f "$BRIEF_PROMPT_FILE"; fi

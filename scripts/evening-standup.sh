@@ -234,4 +234,4 @@ brief_log_event "evening_standup_completed" "evening-standup" "{\"status\": \"ok
 log "Evening standup complete"
 
 # Clean up temp prompt file if created
-[ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ] && [[ "${BRIEF_PROMPT_FILE}" == /tmp/brief-prompt-* ]] && rm -f "$BRIEF_PROMPT_FILE"
+if [ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ] && [[ "${BRIEF_PROMPT_FILE}" == /tmp/brief-prompt-* ]]; then rm -f "$BRIEF_PROMPT_FILE"; fi
