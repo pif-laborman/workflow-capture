@@ -114,26 +114,38 @@ else:
 }
 
 # --- Delivery ---
-# Usage: deliver_brief <message> [channel] [target]
-# Falls back to BRIEF_DELIVERY_CHANNEL / BRIEF_DELIVERY_TARGET if not provided.
+# Usage: deliver_brief <message> [message_type]
+# Delivers to all connected channels (Telegram, Slack, etc.) via the MC internal API.
+# Falls back to direct telegram-send.sh if the API call fails.
 deliver_brief() {
   local MSG="$1"
-  local CHANNEL="${2:-${BRIEF_DELIVERY_CHANNEL:-telegram}}"
-  local TARGET="${3:-${BRIEF_DELIVERY_TARGET:-}}"
+  local MSG_TYPE="${2:-brief}"
+  local TENANT_ID="${BRIEF_TENANT_ID:-${PIF_TENANT_ID:-}}"
+  local MC_TOKEN; MC_TOKEN=$(grep 'MC_API_TOKEN=' /etc/mission-control-api.env 2>/dev/null | cut -d= -f2)
+  local MC_PORT="${API_PORT:-8091}"
 
-  case "$CHANNEL" in
-    telegram)
-      if [ -n "$TARGET" ]; then
-        ~/scripts/telegram-send.sh --chat-id "$TARGET" "$MSG"
-      else
-        ~/scripts/telegram-send.sh "$MSG"
-      fi
-      ;;
-    *)
-      echo "Unsupported delivery channel: $CHANNEL" >&2
-      return 1
-      ;;
-  esac
+  if [ -n "$TENANT_ID" ] && [ -n "$MC_TOKEN" ]; then
+    local PAYLOAD
+    PAYLOAD=$(jq -n --arg tid "$TENANT_ID" --arg out "$MSG" --arg mt "$MSG_TYPE" \
+      '{tenant_id: $tid, output: $out, message_type: $mt}')
+
+    local RESULT
+    RESULT=$(curl -s -w '\n%{http_code}' -X POST "http://127.0.0.1:${MC_PORT}/api/internal/deliver" \
+      -H "Content-Type: application/json" \
+      -H "x-mc-token: ${MC_TOKEN}" \
+      -d "$PAYLOAD" 2>/dev/null)
+
+    local HTTP_CODE
+    HTTP_CODE=$(echo "$RESULT" | tail -1)
+
+    if [ "$HTTP_CODE" = "200" ]; then
+      return 0
+    fi
+    echo "MC deliver API returned $HTTP_CODE — falling back to telegram-send.sh" >&2
+  fi
+
+  # Fallback: direct Telegram send
+  ~/scripts/telegram-send.sh "$MSG"
 }
 
 # --- Field extraction from Claude output ---
