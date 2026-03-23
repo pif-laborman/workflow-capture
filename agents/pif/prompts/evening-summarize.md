@@ -13,15 +13,21 @@ Evening Standup — {Mon DD}
 • One bullet per meaningful task completed (3-6 bullets)
 
 <b>In flight</b>
-• Active work not yet finished
+• Work that was actively touched today but not yet finished
+• ONLY include items with real activity today — if it wasn't worked on today, it doesn't belong here
+• Do NOT carry over stale items from WORKING.md that had no activity today
 
 <b>Blockers</b>
-• What's stuck and what's needed to unblock (omit section if none)
+• What's actually stuck RIGHT NOW and what's needed to unblock (omit section if none)
+• Only include blockers that were encountered or are relevant today — not a running list of everything ever blocked
 
 <b>Tomorrow</b>
-• 2-3 priorities for next day
+• 2-3 concrete priorities derived from today's work and what logically comes next
+• These should follow from what was done/attempted today, not be a stale backlog copy
 
-Keep bullets short — one line each, no sub-bullets. Use Telegram HTML formatting: <b>bold</b> for headers, <i>italic</i> for emphasis, <code>monospace</code> for IDs/commands. Do NOT use Markdown asterisks — only HTML tags. Do NOT include improvement proposals in the summary — they go in TOP_PROPOSAL instead.>
+Keep bullets short — one line each, no sub-bullets. Use Telegram HTML formatting: <b>bold</b> for headers, <i>italic</i> for emphasis, <code>monospace</code> for IDs/commands. Do NOT use Markdown asterisks — only HTML tags. Do NOT include improvement proposals in the summary — they go in TOP_PROPOSAL instead.
+
+IMPORTANT: The standup must reflect TODAY's actual work, not yesterday's state. WORKING.md may be stale — cross-reference it against today's events, Telegram history, and task activity to determine what's actually current.>
 TOP_PROPOSAL: <Pick the single highest-priority proposal from today's review AND from the existing queue in WORKING.md (Improvement Proposals Queue section). Highest priority = most friction caused today or most overdue. Format it as a single clear sentence. If no proposals exist, write "None". Example: "Add Supabase reconciliation to morning brief — stale data reported 4 days running">
 WORKING_UPDATE: <updated content for WORKING.md — current tasks, blockers, what's next. Append any NEW proposals to the Improvement Proposals Queue (don't duplicate existing ones). Mark the top proposal with [FLAGGED] prefix.>
 DAILY_SUMMARY: <Summary sections for today's daily note. Three sections, markdown formatted:

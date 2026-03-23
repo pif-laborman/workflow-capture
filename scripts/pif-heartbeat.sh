@@ -27,10 +27,43 @@ notify() {
 # ─── Kill stale claude processes ─────────────────────────────────────
 # Previous Stage 2 runs may have hung (V8 busy-spin after completing work).
 # Match actual claude/node processes owned by current user, not the script name.
+# IMPORTANT: Exclude processes that are children of any telegram bot service —
+# those are active bot sessions, not stale leftovers.
+BOT_PIDS=""
+for svc in claude-telegram.service meetpif-telegram.service; do
+    _pid=$(systemctl show -p MainPID "$svc" 2>/dev/null | cut -d= -f2)
+    [ -n "$_pid" ] && [ "$_pid" != "0" ] && BOT_PIDS="$BOT_PIDS $_pid"
+done
 STALE_PIDS=$(pgrep -u "$(id -u)" -f "claude" -d ' ' 2>/dev/null | tr ' ' '\n' | grep -v "^$$\$" || true)
 if [ -n "$STALE_PIDS" ]; then
     for pid in $STALE_PIDS; do
         if [ -d "/proc/$pid" ]; then
+            # Skip if this process is a telegram bot or a descendant of one
+            IS_BOT_CHILD=false
+            for BOT_PID in $BOT_PIDS; do
+                if [ "$pid" = "$BOT_PID" ]; then
+                    IS_BOT_CHILD=true
+                    break
+                fi
+                # Walk up the process tree to check ancestry
+                WALK_PID="$pid"
+                for _ in 1 2 3 4 5; do
+                    WALK_PPID=$(ps -o ppid= -p "$WALK_PID" 2>/dev/null | tr -d ' ')
+                    if [ -z "$WALK_PPID" ] || [ "$WALK_PPID" = "1" ] || [ "$WALK_PPID" = "0" ]; then
+                        break
+                    fi
+                    if [ "$WALK_PPID" = "$BOT_PID" ]; then
+                        IS_BOT_CHILD=true
+                        break
+                    fi
+                    WALK_PID="$WALK_PPID"
+                done
+                [ "$IS_BOT_CHILD" = true ] && break
+            done
+            if [ "$IS_BOT_CHILD" = true ]; then
+                continue
+            fi
+
             AGE_SEC=$(( $(date +%s) - $(stat -c %Y /proc/$pid) ))
             if [ "$AGE_SEC" -gt 1800 ]; then
                 log "Killing stale claude process $pid (age: ${AGE_SEC}s)"
@@ -399,7 +432,24 @@ try:
 except Exception:
     pass
 
-# 5. Workflow events from last hour
+# 5. New tenants created today (daily running total)
+try:
+    if sb_url and sb_key:
+        _today_iso = _local_date + "T00:00:00Z"
+        url = f"{sb_url}/rest/v1/tenants?select=name,created_at&created_at=gte.{_today_iso}&order=created_at.asc"
+        req = urllib.request.Request(url, headers={
+            "apikey": sb_key, "Authorization": f"Bearer {sb_key}"
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        new_tenants = json.loads(resp.read())
+        if new_tenants:
+            lines.append(f"New tenants today ({len(new_tenants)}):")
+            for t in new_tenants:
+                lines.append(f"  - {t['name']}")
+except Exception:
+    pass
+
+# 6. Workflow events from last hour
 try:
     if sb_url and sb_key:
         url = (f"{sb_url}/rest/v1/events?type=in.(workflow_started,workflow_completed,workflow_failed)"
@@ -437,6 +487,54 @@ if [ -n "$NOTE_LINES" ] && [ "$NOTE_LINES" != "" ]; then
     log "Appended hourly update to daily note"
 else
     log "No activity in last hour — skipping daily note append"
+fi
+
+# ─── Stage 1.75b: Refresh WORKING.md ──────────────────────────────────
+# Haiku reads current WORKING.md + today's daily note, outputs a refreshed
+# version that reflects actual current state. Cheap (~1 Haiku call), prevents
+# the evening standup from regurgitating stale "In flight" / "Blockers".
+
+WORKING_REFRESH_TIMEOUT=120
+
+WORKING_FILE="$HOME/memory/WORKING.md"
+if [ -f "$WORKING_FILE" ] && [ -f "$DAILY_NOTE" ]; then
+    TODAY_FORMATTED=$(TZ="$TIMEZONE" date '+%Y-%m-%d')
+    WORKING_PROMPT_FILE=$(mktemp /tmp/working-refresh-XXXXX.txt)
+    cat > "$WORKING_PROMPT_FILE" <<WORKING_PROMPT
+You are refreshing WORKING.md to reflect the current state. Today is ${TODAY_FORMATTED}.
+
+Rules:
+- Update the date header to today
+- Move completed items out of "Active / In Progress" — if today's notes show something shipped/deployed/merged, it's done
+- Keep "Active / In Progress" items that still have outstanding work
+- Update "Awaiting Pavol" only if today's notes show a decision was made
+- Do NOT add new items — only reclassify existing ones based on evidence in today's notes
+- Do NOT change "Improvement Proposals Queue" — leave it as-is
+- Keep the same markdown structure and section headers
+- Be concise — this is a state document, not a narrative
+
+Current WORKING.md:
+$(cat "$WORKING_FILE")
+
+Today's daily note (evidence of what happened today):
+$(cat "$DAILY_NOTE")
+
+Output ONLY the updated WORKING.md content. No preamble, no explanation.
+WORKING_PROMPT
+
+    REFRESHED=$(timeout "${WORKING_REFRESH_TIMEOUT}s" cat "$WORKING_PROMPT_FILE" | \
+      claude --model haiku --print --no-session-persistence 2>>"$LOG") || {
+        log "WARN: WORKING.md refresh failed (non-fatal)"
+        REFRESHED=""
+    }
+    rm -f "$WORKING_PROMPT_FILE"
+
+    if [ -n "$REFRESHED" ] && [ ${#REFRESHED} -gt 100 ]; then
+        echo "$REFRESHED" > "$WORKING_FILE"
+        log "WORKING.md refreshed by Haiku (${#REFRESHED} chars)"
+    else
+        log "WORKING.md refresh skipped — output too short or empty"
+    fi
 fi
 
 # ─── Stage 2: Opus Action (only if task found) ───────────────────────
