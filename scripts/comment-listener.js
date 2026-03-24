@@ -84,7 +84,7 @@ async function fetchClaudeConfig() {
     })
     const json = await res.json()
     if (json.status === 'ok' && json.config_dir) {
-      return { config_dir: json.config_dir, connector_tokens: json.connector_tokens || {} }
+      return { config_dir: json.config_dir, connector_tokens: json.connector_tokens || {}, connector_key: json.connector_key || '' }
     }
     log(`Claude config fetch: ${json.status} — ${json.error || 'no config_dir'}`)
     return null
@@ -170,11 +170,12 @@ Comment: ${content}
 Steps:
 1. Fetch the full task (tasks table, id = '${taskId}') and the comment thread (task_comments table, task_id = '${taskId}', order by created_at asc) from Supabase using MCP.
 2. Mark this comment as seen: update task_comments set seen_at = now() where id = '${commentId}'. This shows the 👀 emoji in the UI. Only do this AFTER you've read the context.
-3. If the user is asking you to DO something — do it. You have full tool access.
-4. Post your reply: insert into task_comments (task_id, author, tenant_id, content) values ('${taskId}', '${ASSISTANT_NAME}', '${TENANT_ID}', '<your reply>').
-5. Format your reply for readability — markdown, bullet points, structure over walls of text.
-6. Do NOT post to task_comments more than once.
-7. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', '${ASSISTANT_NAME}'). Then update the task. The DB trigger skips duplicates within 5 seconds.`
+3. **VIDEO/REEL RULE:** If the task description or any comment contains a video URL (Instagram reel, YouTube, TikTok, etc.), you MUST download and transcribe the audio BEFORE doing any analysis. Use: \`yt-dlp -x --audio-format mp3 -o "/tmp/task-audio.%(ext)s" '<url>'\` then \`~/scripts/transcribe.py /tmp/task-audio.mp3\`. Never build analysis from captions or comments alone — the audio is the primary source.
+4. If the user is asking you to DO something — do it. You have full tool access.
+5. Post your reply: insert into task_comments (task_id, author, tenant_id, content) values ('${taskId}', '${ASSISTANT_NAME}', '${TENANT_ID}', '<your reply>').
+6. Format your reply for readability — markdown, bullet points, structure over walls of text.
+7. Do NOT post to task_comments more than once.
+8. If you change a task's status, FIRST insert a transition record: insert into task_status_transitions (task_id, from_status, to_status, changed_by) values ('<task_id>', '<old_status>', '<new_status>', '${ASSISTANT_NAME}'). Then update the task. The DB trigger skips duplicates within 5 seconds.`
 
   const resumePrompt = `New follow-up comment on the same task.
 
@@ -193,6 +194,7 @@ Steps:
   // Fetch tenant Claude credentials and connector tokens
   const config = await fetchClaudeConfig()
   const connectorTokens = config ? (config.connector_tokens || {}) : {}
+  const connectorKey = config ? (config.connector_key || '') : ''
   const configDir = config ? config.config_dir : ''
 
   if (config) {
@@ -219,10 +221,11 @@ Steps:
       safeEnv[k] = v
     }
   }
-  // Add connector tokens
+  // Add connector tokens + connector API key
   for (const [k, v] of Object.entries(connectorTokens)) {
     safeEnv[k] = v
   }
+  if (connectorKey) safeEnv.PIF_CONNECTOR_KEY = connectorKey
   if (configDir) safeEnv.CLAUDE_CONFIG_DIR = configDir
 
   const callerUser = os.userInfo().username
@@ -244,12 +247,13 @@ Steps:
   if (isAdmin) {
     // Admin tenant — full access, no sandbox. MCP tools need localhost.
     // Do NOT override CLAUDE_CONFIG_DIR — admin uses its own ~/.claude credentials.
-    // Only inject connector tokens.
+    // Only inject connector tokens + connector API key.
     const env = { ...process.env }
     delete env.CLAUDECODE
     for (const [k, v] of Object.entries(connectorTokens)) {
       env[k] = v
     }
+    if (connectorKey) env.PIF_CONNECTOR_KEY = connectorKey
     child = spawn('claude', claudeArgs, {
       env,
       stdio: ['ignore', 'pipe', 'pipe'],

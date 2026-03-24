@@ -38,14 +38,8 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 
 > **"my calendar" / "my meetings" / "my email"** → always means `pavol.dzurjanin@duvo.ai`
 >
-> ```bash
-> source ~/.pif-env
-> export GOG_KEYRING_PASSWORD=$(pif-creds get "GOG (Google Workspace CLI)")
-> export GOG_ACCOUNT=pif.laborman@gmail.com
-> gog cal list --account pavol.dzurjanin@duvo.ai    # calendar
-> gog gmail list --account pavol.dzurjanin@duvo.ai   # email
-> ```
-> Scopes: gmail.readonly, calendar.readonly. No derivation needed — just use the snippet above.
+> Use Nango Google Calendar / Gmail connectors. Pavol's account must be connected via Mission Control Connectors UI.
+> For Pif's own account (pif.laborman@gmail.com), use Pif's Nango connector tokens (`$CONNECTOR_TOKEN_GOOGLE_MAIL`, `$CONNECTOR_TOKEN_GOOGLE_CALENDAR`).
 
 ## External Services
 
@@ -78,28 +72,39 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 - **CLI:** `gh` (authenticated via `GH_TOKEN`)
 - **Repos:** antfarm, mission-control, pif-setup, simple-stuff
 
-### Gmail / GOG CLI (Google Workspace)
-- **Account:** pif.laborman@gmail.com
-- **Services:** Gmail, Calendar, Drive, Contacts, Sheets, Docs
-- **SMTP:** Direct send via app password
-- **Config:** `~/.config/gogcli/credentials.json`, `client_secret.json`
-- **Quick start** (copy-paste, no exploration):
-  ```bash
-  source ~/.pif-env
-  export GOG_KEYRING_PASSWORD=$(pif-creds get "GOG (Google Workspace CLI)")
-  export GOG_ACCOUNT=pif.laborman@gmail.com
-  gog <command>
-  ```
-- **Known issue:** Contacts API not enabled in GCP console
-- **Auth workaround:** `--remote --step 2` is buggy. Use curl token exchange + `gog auth tokens import` instead
-- **Refresh token:** expires in ~7 days — if auth fails, run `bash ~/scripts/gog-auth.sh`
+### Google Workspace (via Nango)
+- **Infra:** `nango.meetpif.com` — OAuth tokens auto-refresh, no manual maintenance
+- **Pif's account:** pif.laborman@gmail.com — connected via Nango
+- **Services:** Gmail, Calendar, Drive, Docs, Sheets, Slides
+- **Scopes:** Full read+write on all services (see MC connectors route for exact scopes)
+- **Pavol's account:** pavol.dzurjanin@duvo.ai — needs Nango connection via MC Connectors UI
+- **DEFAULT for "my meetings/calendar/email"** — when Pavol asks about his schedule, always check Pavol's account
+- **GOG CLI:** DEPRECATED (2026-03-23). Binary still at `/usr/local/bin/gog` but not maintained. Use Nango tokens + curl instead.
 
-### Pavol's Work Google (read-only, delegated access)
-- **Account:** pavol.dzurjanin@duvo.ai
-- **Scopes:** gmail.readonly, calendar.readonly
-- **Authenticated in GOG** — same keyring, just add `--account pavol.dzurjanin@duvo.ai`
-- **GCP project:** pif-cli (app in testing mode, Pavol added as test user)
-- **DEFAULT for "my meetings/calendar/email"** — when Pavol asks about his schedule, always check this account first
+### Connector Token API (for tenant Pifs)
+Two systems for accessing Nango tokens through MC — **never expose Nango directly (port 8091/3003)**.
+
+**1. Frontend API** (`/api/connectors/*`) — JWT-authenticated, powers Connectors UI
+- `GET /api/connectors/providers` — list Nango provider templates
+- `GET /api/connectors/connections` — tenant's active connections (with email resolution)
+- `GET /api/connectors/token/:connectionId` — fresh access token proxy
+- `POST /api/connectors/connect` — create OAuth connect session (supports reconnect)
+- Auth: standard MC JWT (same as all `/api/*` routes)
+
+**2. Tenant Pif API** (`/api/connector-token/*`) — HMAC-authenticated, for agent use
+- `GET /api/connector-token/:provider` — fresh OAuth token for a provider
+- `GET /api/connector-token` — list available connectors for the tenant
+- Auth headers: `x-tenant-id: <tenant_id>` + `Authorization: Bearer <hmac_key>`
+- HMAC key derivation: `HMAC-SHA256(MC_JWT_SECRET, "connector:" + tenant_id)`
+- Response: `{ "access_token": "...", "provider": "google-mail", "expires_at": "..." }`
+- Supports all Nango auth modes: OAuth, API_KEY, BASIC
+
+**For admin Pif (this instance):** Use the tenant Pif API with admin tenant_id, or the env vars still injected by comment-listener (`$CONNECTOR_TOKEN_GOOGLE_MAIL`, etc.).
+
+**Source files:**
+- Frontend routes: `/opt/assistant-platform/mc/server/src/routes/connectors.ts`
+- Tenant Pif routes: `/opt/assistant-platform/mc/server/src/routes/auth.ts` (lines ~385-540)
+- Mount point: `/opt/assistant-platform/mc/server/src/index.ts`
 
 ### Apify (web scraping)
 - **Account:** quintillionth_labyrinth (free tier — $5/mo, 25 concurrent runs)
@@ -296,14 +301,15 @@ audio_path, status = client.predict(
 | session-search.sh | Search indexed sessions |
 | sync-projects.sh | Backup projects to GitHub |
 | transcribe.py | Audio transcription |
-| gog-auth.sh | Google Workspace authentication helper |
+| gog-auth.sh | DEPRECATED — Google Workspace auth (use Nango) |
 | push-all.sh | Batch git push |
 
 ## Cron
 
-Single entry — everything else is in the Supabase schedules table:
+Two entries — everything else is in the Supabase schedules table:
 ```
 * * * * * . /root/.pif-env && python3 /root/scripts/pif-runner.py --check-schedules
+17 2 * * * . /root/.pif-env && python3 /root/scripts/gong-transcripts.py --days 2 --sync >> /root/logs/gong-sync.log 2>&1
 ```
 Logs: `/root/logs/schedule-checker.log`
 
