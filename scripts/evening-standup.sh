@@ -49,10 +49,10 @@ fi
 run_self_review() {
   local DATA="$1"
   local PROMPT
-  if [ -n "$BRIEF_ID" ]; then
-    PROMPT=$(cat "${PROMPTS_DIR}/evening-self-review-tenant.md")
-  else
+  if _is_admin_tenant; then
     PROMPT=$(cat "${PROMPTS_DIR}/evening-self-review.md")
+  else
+    PROMPT=$(cat "${PROMPTS_DIR}/evening-self-review-tenant.md")
   fi
 
   echo "${PROMPT}
@@ -69,14 +69,13 @@ run_summarize() {
   local DATA="$1"
   local PROPOSALS="$2"
   local PROMPT
-  # Use custom prompt if provided via brief config, else tenant default, else Pif default
+  # Use custom prompt if provided via brief config, else admin/tenant default
   if [ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ]; then
     PROMPT=$(cat "${BRIEF_PROMPT_FILE}")
-  elif [ -n "$BRIEF_ID" ]; then
-    # Non-admin tenant: use tenant prompt (no Pif/Pavol references)
-    PROMPT=$(cat "${PROMPTS_DIR}/evening-summarize-tenant.md")
-  else
+  elif _is_admin_tenant; then
     PROMPT=$(cat "${PROMPTS_DIR}/evening-summarize.md")
+  else
+    PROMPT=$(cat "${PROMPTS_DIR}/evening-summarize-tenant.md")
   fi
 
   local INPUT="${PROMPT}
