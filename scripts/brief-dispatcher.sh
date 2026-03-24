@@ -16,8 +16,8 @@ TS=$(date '+%Y-%m-%d %H:%M')
 
 log() { echo "${TS} — $1" >> "$LOG"; }
 
-# Fetch all enabled briefs with a delivery target
-BRIEFS=$(sb_get "briefs?enabled=eq.true&delivery_target=not.is.null&select=id,name,cron_expression,timezone" 2>/dev/null) || {
+# Fetch all enabled briefs (delivery target resolved dynamically by MC API)
+BRIEFS=$(sb_get "briefs?enabled=eq.true&select=id,name,cron_expression,timezone" 2>/dev/null) || {
   log "Failed to fetch briefs"
   exit 1
 }
