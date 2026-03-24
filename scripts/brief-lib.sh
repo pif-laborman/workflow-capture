@@ -299,11 +299,19 @@ for t, c in sorted(counts.items(), key=lambda x: -x[1]):
 }
 
 section_proposals() {
+  # Pif-admin only — local filesystem data, never tenant-safe
+  local ADMIN_TENANT="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
+  if [ "${BRIEF_TENANT_ID:-}" != "$ADMIN_TENANT" ] && [ -n "${BRIEF_TENANT_ID:-}" ]; then
+    echo "=== PREVIOUS IMPROVEMENT PROPOSALS ==="
+    echo "No proposals (tenant-scoped proposals not yet implemented)"
+    return 0
+  fi
   echo "=== PREVIOUS IMPROVEMENT PROPOSALS ==="
   tail -30 ~/memory/improvement-proposals.md 2>/dev/null || echo "No prior proposals"
 }
 
 section_telegram_history() {
+  if ! _is_admin_tenant; then echo "=== TELEGRAM INTERACTIONS === (skipped — tenant scope)"; return 0; fi
   local TODAY
   TODAY=$(date +%Y-%m-%d)
   echo "=== TELEGRAM INTERACTIONS TODAY ==="
@@ -316,12 +324,24 @@ section_telegram_history() {
 }
 
 section_learnings() {
+  if ! _is_admin_tenant; then echo "=== RECENT LEARNINGS === (skipped — tenant scope)"; return 0; fi
   echo "=== RECENT LEARNINGS ==="
   tail -20 ~/memory/.learnings/LEARNINGS.md 2>/dev/null || echo "None"
 }
 
+# --- Pif-admin tenant guard ---
+# Returns 0 (true) if current brief is for the admin tenant, 1 otherwise.
+# Use: if ! _is_admin_tenant; then echo "skipped"; return 0; fi
+_ADMIN_TENANT_ID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
+_is_admin_tenant() {
+  [ -z "${BRIEF_TENANT_ID:-}" ] || [ "${BRIEF_TENANT_ID}" = "$_ADMIN_TENANT_ID" ]
+}
+
 # Pif-only sections (local filesystem, not multi-tenant)
+# Each one guards with _is_admin_tenant — if a non-admin brief somehow
+# requests these sections, they return empty instead of leaking Pif data.
 section_git_activity() {
+  if ! _is_admin_tenant; then echo "=== GIT ACTIVITY === (skipped — tenant scope)"; return 0; fi
   echo "=== GIT ACTIVITY (last 24h) ==="
   for dir in ~/projects/*/; do
     local PROJ
@@ -342,6 +362,7 @@ section_git_activity() {
 }
 
 section_deployments() {
+  if ! _is_admin_tenant; then echo "=== DEPLOYMENTS === (skipped — tenant scope)"; return 0; fi
   echo "=== DEPLOYMENTS ==="
   local MC_DIST=~/projects/mission-control/dist/index.html
   if [ -f "$MC_DIST" ]; then
@@ -360,6 +381,7 @@ section_deployments() {
 }
 
 section_daily_notes() {
+  if ! _is_admin_tenant; then echo "=== DAILY NOTES === (skipped — tenant scope)"; return 0; fi
   local YESTERDAY
   YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
   echo "=== YESTERDAY'S NOTE ==="
@@ -370,16 +392,19 @@ section_daily_notes() {
 }
 
 section_working_state() {
+  if ! _is_admin_tenant; then echo "=== WORKING STATE === (skipped — tenant scope)"; return 0; fi
   echo "=== WORKING STATE ==="
   cat ~/memory/WORKING.md 2>/dev/null || echo "No working state"
 }
 
 section_inbox() {
+  if ! _is_admin_tenant; then echo "=== INBOX === (skipped — tenant scope)"; return 0; fi
   echo "=== INBOX ==="
   ls ~/workspace/inbox/ 2>/dev/null | head -20 || echo "Inbox empty"
 }
 
 section_session_activity() {
+  if ! _is_admin_tenant; then echo "=== SESSION ACTIVITY === (skipped — tenant scope)"; return 0; fi
   echo "=== RECENT SESSION ACTIVITY ==="
   local LATEST_SESSION
   LATEST_SESSION=$(ls -t ~/.claude/projects/-root/*.jsonl 2>/dev/null | head -1) || true
@@ -395,6 +420,7 @@ section_session_activity() {
 }
 
 section_skills_changes() {
+  if ! _is_admin_tenant; then echo "=== SKILLS CHANGES === (skipped — tenant scope)"; return 0; fi
   echo "=== SKILLS CHANGES (last 24h) ==="
   find ~/.claude/skills/ -name "*.md" -mtime -1 2>/dev/null | while read f; do
     echo "  $(basename $(dirname $f))/$(basename $f)"

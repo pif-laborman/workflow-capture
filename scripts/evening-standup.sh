@@ -65,20 +65,29 @@ run_summarize() {
   local DATA="$1"
   local PROPOSALS="$2"
   local PROMPT
-  # Use custom prompt if provided via brief config, else default
+  # Use custom prompt if provided via brief config, else tenant default, else Pif default
   if [ -n "${BRIEF_PROMPT_FILE:-}" ] && [ -f "${BRIEF_PROMPT_FILE}" ]; then
     PROMPT=$(cat "${BRIEF_PROMPT_FILE}")
+  elif [ -n "$BRIEF_ID" ]; then
+    # Non-admin tenant: use tenant prompt (no Pif/Pavol references)
+    PROMPT=$(cat "${PROMPTS_DIR}/evening-summarize-tenant.md")
   else
     PROMPT=$(cat "${PROMPTS_DIR}/evening-summarize.md")
   fi
 
-  echo "${PROMPT}
+  local INPUT="${PROMPT}
 
 Today's data:
-${DATA}
+${DATA}"
+  # Only include proposals section for Pif-admin runs
+  if [ -z "$BRIEF_ID" ] && [ -n "$PROPOSALS" ] && [ "$PROPOSALS" != "None" ]; then
+    INPUT="${INPUT}
 
 Self-improvement proposals from today's review:
-${PROPOSALS}" | env -u CLAUDECODE claude --print --model "$MODEL"
+${PROPOSALS}"
+  fi
+
+  echo "$INPUT" | env -u CLAUDECODE claude --print --model "$MODEL"
 }
 
 # ============================================================
@@ -151,14 +160,20 @@ DATA=$(gather_sections "$SECTIONS" 2>&1) || {
 }
 log "Data gathered"
 
-# Step 2: Self-review
-REVIEW_OUTPUT=$(run_self_review "$DATA" 2>&1) || {
-  log "Self-review failed (non-critical, continuing)"
-  REVIEW_OUTPUT="Self-review unavailable"
-}
-PROPOSALS=$(extract_field "$REVIEW_OUTPUT" "PROPOSALS")
-PROPOSAL_COUNT=$(extract_field "$REVIEW_OUTPUT" "PROPOSAL_COUNT")
-log "Self-review done (${PROPOSAL_COUNT:-0} proposals)"
+# Step 2: Self-review (Pif-admin only — tenant standups skip this)
+if [ -z "$BRIEF_ID" ]; then
+  REVIEW_OUTPUT=$(run_self_review "$DATA" 2>&1) || {
+    log "Self-review failed (non-critical, continuing)"
+    REVIEW_OUTPUT="Self-review unavailable"
+  }
+  PROPOSALS=$(extract_field "$REVIEW_OUTPUT" "PROPOSALS")
+  PROPOSAL_COUNT=$(extract_field "$REVIEW_OUTPUT" "PROPOSAL_COUNT")
+  log "Self-review done (${PROPOSAL_COUNT:-0} proposals)"
+else
+  PROPOSALS="None"
+  PROPOSAL_COUNT="0"
+  log "Self-review skipped (tenant brief)"
+fi
 
 # Step 3: Summarize
 SUMMARY_OUTPUT=$(run_summarize "$DATA" "$PROPOSALS" 2>&1) || {

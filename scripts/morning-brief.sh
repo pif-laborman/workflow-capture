@@ -55,6 +55,12 @@ $(gather_sections "$SECTIONS" 2>&1)" || {
   exit 1
 }
 
+# Select prompt: custom (from DB) → tenant default → Pif default
+if [ -n "$BRIEF_ID" ] && [ "$PROMPT_FILE" = "$DEFAULT_PROMPT" ]; then
+  # Non-admin tenant without custom prompt: use tenant prompt
+  PROMPT_FILE=~/agents/pif/prompts/morning-brief-tenant.md
+fi
+
 # Summarize
 PROMPT=$(cat "$PROMPT_FILE")
 BRIEF=$(echo "${PROMPT}
