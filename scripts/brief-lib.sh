@@ -163,6 +163,20 @@ if m:
 " 2>/dev/null
 }
 
+# --- Tenant memory root resolver ---
+# Admin tenant (Pif) uses ~/memory. All others use ~/tenants/<id>/memory.
+_ADMIN_TENANT_ID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
+_is_admin_tenant() {
+  [ -z "${BRIEF_TENANT_ID:-}" ] || [ "${BRIEF_TENANT_ID}" = "$_ADMIN_TENANT_ID" ]
+}
+_tenant_memory() {
+  if _is_admin_tenant; then
+    echo "$HOME/memory"
+  else
+    echo "$HOME/tenants/${BRIEF_TENANT_ID}/memory"
+  fi
+}
+
 # ============================================================
 # SECTION GATHERERS
 # Each function gathers data for one section. Tenant-scoped
@@ -299,42 +313,46 @@ for t, c in sorted(counts.items(), key=lambda x: -x[1]):
 }
 
 section_proposals() {
-  # Pif-admin only — local filesystem data, never tenant-safe
-  local ADMIN_TENANT="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
-  if [ "${BRIEF_TENANT_ID:-}" != "$ADMIN_TENANT" ] && [ -n "${BRIEF_TENANT_ID:-}" ]; then
-    echo "=== PREVIOUS IMPROVEMENT PROPOSALS ==="
-    echo "No proposals (tenant-scoped proposals not yet implemented)"
-    return 0
-  fi
+  local MEM; MEM=$(_tenant_memory)
   echo "=== PREVIOUS IMPROVEMENT PROPOSALS ==="
-  tail -30 ~/memory/improvement-proposals.md 2>/dev/null || echo "No prior proposals"
+  tail -30 "${MEM}/improvement-proposals.md" 2>/dev/null || echo "No prior proposals"
 }
 
 section_telegram_history() {
-  if ! _is_admin_tenant; then echo "=== TELEGRAM INTERACTIONS === (skipped — tenant scope)"; return 0; fi
-  local TODAY
-  TODAY=$(date +%Y-%m-%d)
-  echo "=== TELEGRAM INTERACTIONS TODAY ==="
-  sqlite3 /root/data/bot.db "
-    SELECT datetime(timestamp) as ts, substr(prompt, 1, 200) as prompt
-    FROM messages
-    WHERE date(timestamp) = date('now')
-    ORDER BY timestamp;
-  " 2>/dev/null || echo "No interactions today"
+  if _is_admin_tenant; then
+    local TODAY
+    TODAY=$(date +%Y-%m-%d)
+    echo "=== TELEGRAM INTERACTIONS TODAY ==="
+    sqlite3 /root/data/bot.db "
+      SELECT datetime(timestamp) as ts, substr(prompt, 1, 200) as prompt
+      FROM messages
+      WHERE date(timestamp) = date('now')
+      ORDER BY timestamp;
+    " 2>/dev/null || echo "No interactions today"
+  else
+    # Tenants: use message_delivery_log from Supabase (outbound messages)
+    local TID="${BRIEF_TENANT_ID:-}"
+    local DAY_AGO
+    DAY_AGO=$(date -u -d "24 hours ago" +%Y-%m-%dT%H:%M:%SZ)
+    echo "=== MESSAGE HISTORY (24h) ==="
+    sb_get "message_delivery_log?tenant_id=eq.${TID}&created_at=gte.${DAY_AGO}&select=channel,message_type,status,created_at&order=created_at.desc&limit=20" \
+      2>/dev/null | python3 -c "
+import sys, json
+rows = json.loads(sys.stdin.read())
+if not rows:
+    print('No messages in last 24h')
+else:
+    for r in rows:
+        ts = r['created_at'][:16].replace('T',' ')
+        print(f'  {ts} [{r[\"channel\"]}] {r[\"message_type\"]} — {r[\"status\"]}')
+" 2>/dev/null || echo "No message history available"
+  fi
 }
 
 section_learnings() {
-  if ! _is_admin_tenant; then echo "=== RECENT LEARNINGS === (skipped — tenant scope)"; return 0; fi
+  local MEM; MEM=$(_tenant_memory)
   echo "=== RECENT LEARNINGS ==="
-  tail -20 ~/memory/.learnings/LEARNINGS.md 2>/dev/null || echo "None"
-}
-
-# --- Pif-admin tenant guard ---
-# Returns 0 (true) if current brief is for the admin tenant, 1 otherwise.
-# Use: if ! _is_admin_tenant; then echo "skipped"; return 0; fi
-_ADMIN_TENANT_ID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
-_is_admin_tenant() {
-  [ -z "${BRIEF_TENANT_ID:-}" ] || [ "${BRIEF_TENANT_ID}" = "$_ADMIN_TENANT_ID" ]
+  tail -20 "${MEM}/.learnings/LEARNINGS.md" 2>/dev/null || echo "None"
 }
 
 # Pif-only sections (local filesystem, not multi-tenant)
@@ -381,20 +399,20 @@ section_deployments() {
 }
 
 section_daily_notes() {
-  if ! _is_admin_tenant; then echo "=== DAILY NOTES === (skipped — tenant scope)"; return 0; fi
+  local MEM; MEM=$(_tenant_memory)
   local YESTERDAY
   YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
   echo "=== YESTERDAY'S NOTE ==="
-  cat ~/memory/daily/${YESTERDAY}.md 2>/dev/null || echo "No note for yesterday"
+  cat "${MEM}/daily/${YESTERDAY}.md" 2>/dev/null || echo "No note for yesterday"
   echo ""
   echo "=== TODAY'S NOTE ==="
-  cat ~/memory/daily/$(date +%Y-%m-%d).md 2>/dev/null || echo "No daily note yet"
+  cat "${MEM}/daily/$(date +%Y-%m-%d).md" 2>/dev/null || echo "No daily note yet"
 }
 
 section_working_state() {
-  if ! _is_admin_tenant; then echo "=== WORKING STATE === (skipped — tenant scope)"; return 0; fi
+  local MEM; MEM=$(_tenant_memory)
   echo "=== WORKING STATE ==="
-  cat ~/memory/WORKING.md 2>/dev/null || echo "No working state"
+  cat "${MEM}/WORKING.md" 2>/dev/null || echo "No working state"
 }
 
 section_inbox() {

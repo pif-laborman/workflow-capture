@@ -49,7 +49,11 @@ fi
 run_self_review() {
   local DATA="$1"
   local PROMPT
-  PROMPT=$(cat "${PROMPTS_DIR}/evening-self-review.md")
+  if [ -n "$BRIEF_ID" ]; then
+    PROMPT=$(cat "${PROMPTS_DIR}/evening-self-review-tenant.md")
+  else
+    PROMPT=$(cat "${PROMPTS_DIR}/evening-self-review.md")
+  fi
 
   echo "${PROMPT}
 
@@ -79,8 +83,7 @@ run_summarize() {
 
 Today's data:
 ${DATA}"
-  # Only include proposals section for Pif-admin runs
-  if [ -z "$BRIEF_ID" ] && [ -n "$PROPOSALS" ] && [ "$PROPOSALS" != "None" ]; then
+  if [ -n "$PROPOSALS" ] && [ "$PROPOSALS" != "None" ]; then
     INPUT="${INPUT}
 
 Self-improvement proposals from today's review:
@@ -96,19 +99,20 @@ ${PROPOSALS}"
 log_proposals() {
   local PROPOSALS="$1"
   local PROPOSAL_COUNT="$2"
+  local MEM_DIR; MEM_DIR=$(_tenant_memory)
 
   # Strip to just the number
   PROPOSAL_COUNT=$(echo "$PROPOSAL_COUNT" | tr -dc '0-9')
   PROPOSAL_COUNT=${PROPOSAL_COUNT:-0}
 
   if [ "$PROPOSAL_COUNT" != "0" ] && [ -n "$PROPOSAL_COUNT" ]; then
-    mkdir -p ~/memory
-    echo "" >> ~/memory/improvement-proposals.md
-    echo "## ${TODAY} Evening Review" >> ~/memory/improvement-proposals.md
-    echo "" >> ~/memory/improvement-proposals.md
-    echo "$PROPOSALS" >> ~/memory/improvement-proposals.md
-    echo "" >> ~/memory/improvement-proposals.md
-    log "Logged ${PROPOSAL_COUNT} proposals"
+    mkdir -p "$MEM_DIR"
+    echo "" >> "${MEM_DIR}/improvement-proposals.md"
+    echo "## ${TODAY} Evening Review" >> "${MEM_DIR}/improvement-proposals.md"
+    echo "" >> "${MEM_DIR}/improvement-proposals.md"
+    echo "$PROPOSALS" >> "${MEM_DIR}/improvement-proposals.md"
+    echo "" >> "${MEM_DIR}/improvement-proposals.md"
+    log "Logged ${PROPOSAL_COUNT} proposals to ${MEM_DIR}"
   else
     log "No proposals to log"
   fi
@@ -119,10 +123,13 @@ log_proposals() {
 # ============================================================
 update_working() {
   local WORKING_UPDATE="$1"
+  local MEM_DIR; MEM_DIR=$(_tenant_memory)
   if [ -n "$WORKING_UPDATE" ]; then
-    cd ~/memory && git add -A && git commit -m "pre-update: evening-standup ${TODAY}" --allow-empty -q 2>/dev/null || true
-    echo "$WORKING_UPDATE" > ~/memory/WORKING.md
-    log "WORKING.md updated"
+    if _is_admin_tenant; then
+      cd ~/memory && git add -A && git commit -m "pre-update: evening-standup ${TODAY}" --allow-empty -q 2>/dev/null || true
+    fi
+    echo "$WORKING_UPDATE" > "${MEM_DIR}/WORKING.md"
+    log "WORKING.md updated at ${MEM_DIR}"
   fi
 }
 
@@ -160,20 +167,14 @@ DATA=$(gather_sections "$SECTIONS" 2>&1) || {
 }
 log "Data gathered"
 
-# Step 2: Self-review (Pif-admin only — tenant standups skip this)
-if [ -z "$BRIEF_ID" ]; then
-  REVIEW_OUTPUT=$(run_self_review "$DATA" 2>&1) || {
-    log "Self-review failed (non-critical, continuing)"
-    REVIEW_OUTPUT="Self-review unavailable"
-  }
-  PROPOSALS=$(extract_field "$REVIEW_OUTPUT" "PROPOSALS")
-  PROPOSAL_COUNT=$(extract_field "$REVIEW_OUTPUT" "PROPOSAL_COUNT")
-  log "Self-review done (${PROPOSAL_COUNT:-0} proposals)"
-else
-  PROPOSALS="None"
-  PROPOSAL_COUNT="0"
-  log "Self-review skipped (tenant brief)"
-fi
+# Step 2: Self-review
+REVIEW_OUTPUT=$(run_self_review "$DATA" 2>&1) || {
+  log "Self-review failed (non-critical, continuing)"
+  REVIEW_OUTPUT="Self-review unavailable"
+}
+PROPOSALS=$(extract_field "$REVIEW_OUTPUT" "PROPOSALS")
+PROPOSAL_COUNT=$(extract_field "$REVIEW_OUTPUT" "PROPOSAL_COUNT")
+log "Self-review done (${PROPOSAL_COUNT:-0} proposals)"
 
 # Step 3: Summarize
 SUMMARY_OUTPUT=$(run_summarize "$DATA" "$PROPOSALS" 2>&1) || {
@@ -186,9 +187,11 @@ WORKING_UPDATE=$(extract_field "$SUMMARY_OUTPUT" "WORKING_UPDATE")
 DAILY_SUMMARY=$(extract_field "$SUMMARY_OUTPUT" "DAILY_SUMMARY")
 log "Summary generated"
 
-# Step 4: Update daily note summary (Pif-only)
-if [ -z "$BRIEF_ID" ] && [ -n "$DAILY_SUMMARY" ]; then
-  DAILY_NOTE="$HOME/memory/daily/${TODAY}.md"
+# Step 4: Update daily note summary
+MEM_DIR=$(_tenant_memory)
+if [ -n "$DAILY_SUMMARY" ]; then
+  DAILY_NOTE="${MEM_DIR}/daily/${TODAY}.md"
+  mkdir -p "${MEM_DIR}/daily"
   if [ -f "$DAILY_NOTE" ]; then
     # Replace the placeholder sections between the title and the first heartbeat entry
     python3 -c "
@@ -204,18 +207,14 @@ open('$DAILY_NOTE', 'w').write(updated)
   fi
 fi
 
-# Step 5: Log proposals (Pif-only — skip for other tenants)
-if [ -z "$BRIEF_ID" ]; then
-  log_proposals "$PROPOSALS" "$PROPOSAL_COUNT"
-fi
+# Step 5: Log proposals (to tenant's own file)
+log_proposals "$PROPOSALS" "$PROPOSAL_COUNT"
 
-# Step 6: Update WORKING.md (Pif-only — skip for other tenants)
-if [ -z "$BRIEF_ID" ]; then
-  update_working "$WORKING_UPDATE"
-fi
+# Step 6: Update WORKING.md (to tenant's own file)
+update_working "$WORKING_UPDATE"
 
-# Step 7: Blog post (Pif-only, non-blocking)
-if [ -z "$BRIEF_ID" ]; then
+# Step 7: Blog post (Pif-admin only, non-blocking)
+if _is_admin_tenant; then
   write_blog_post "$DATA" "$SUMMARY" &
   BLOG_PID=$!
   log "Blog post started (pid ${BLOG_PID})"
