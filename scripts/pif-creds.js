@@ -26,7 +26,8 @@ const CREDS_PASSWORD = process.env.PIF_CREDS_PASSWORD
 
 // MC API for write operations
 const MC_API_URL = process.env.MC_API_URL || 'https://meetpif.com'
-const MC_API_TOKEN = process.env.MC_API_TOKEN
+const MC_TENANT_TOKEN = process.env.MC_TENANT_TOKEN   // HMAC-scoped, preferred
+const MC_API_TOKEN = process.env.MC_API_TOKEN          // admin fallback
 const PIF_TENANT_ID = process.env.PIF_TENANT_ID
 
 // Prefer service_role key (bypasses RLS). Fall back to anon for backward compat.
@@ -145,8 +146,9 @@ function toVarPrefix(serviceName) {
 // --- MC API writes ---
 
 function requireWriteEnv() {
-  if (!MC_API_TOKEN) {
-    console.error('Missing MC_API_TOKEN — required for write operations')
+  const token = MC_TENANT_TOKEN || MC_API_TOKEN
+  if (!token) {
+    console.error('Missing MC_TENANT_TOKEN or MC_API_TOKEN — required for write operations')
     process.exit(1)
   }
   if (!PIF_TENANT_ID) {
@@ -156,11 +158,12 @@ function requireWriteEnv() {
 }
 
 async function mcApiRequest(method, path, body) {
+  const token = MC_TENANT_TOKEN || MC_API_TOKEN
   const res = await fetch(`${MC_API_URL}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
-      'x-mc-token': MC_API_TOKEN,
+      'x-mc-token': token,
       'x-mc-tenant-id': PIF_TENANT_ID,
     },
     body: body ? JSON.stringify(body) : undefined,
