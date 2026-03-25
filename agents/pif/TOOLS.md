@@ -29,8 +29,12 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 - `pif-creds get <service> --notes` — decrypted notes
 - `pif-creds get <service> --json` — full record
 - `pif-creds export` — shell export statements for all services
+- `pif-creds set <service> <password>` — save or update a credential
+  - Optional flags: `--url URL`, `--username USER`, `--notes NOTES`
+  - If the service already exists, it updates in place
+- `pif-creds delete <service>` — delete a credential
 
-**Convention for new credentials:** Always store in the logins table via Mission Control UI. Scripts fetch at startup with `pif-creds get`. Never add secrets to `.pif-env` or systemd unit files.
+**Convention for new credentials:** Store via `pif-creds set` or the Mission Control UI. Scripts fetch at startup with `pif-creds get`. Never add secrets to `.pif-env` or systemd unit files.
 
 **Python subprocess trap:** When a Python script resolves a key into a variable (`KEY = pif-creds ...`), subprocess children don't inherit it. Always `os.environ["PIF_SUPABASE_SERVICE_ROLE_KEY"] = KEY` immediately after resolving. Bash `export` does this automatically; Python does not. This has caused dispatch failures twice.
 
