@@ -7,6 +7,8 @@
 
 set -euo pipefail
 
+source ~/.pif-env
+
 ADMIN_UUID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
 TODAY=$(date +%Y-%m-%d)
 
@@ -20,7 +22,7 @@ create_daily_note() {
   fi
 
   mkdir -p "$NOTE_DIR"
-  cat > "$NOTE_PATH" << EOF
+  cat > "$NOTE_PATH" << TEMPLATE
 # Daily Note — ${TODAY}
 
 ## Events
@@ -29,7 +31,7 @@ create_daily_note() {
 
 ## Notes
 
-EOF
+TEMPLATE
 
   # Match ownership to parent dir (so tenant users can write)
   local OWNER
@@ -45,8 +47,17 @@ resolve_tenant_dir() {
   local TID="$1"
   if [ "$TID" = "$ADMIN_UUID" ]; then
     echo "$HOME/memory/daily"
+    return
+  fi
+  local INSTANCE
+  INSTANCE=$(curl -s "${PIF_SUPABASE_URL}/rest/v1/tenants?id=eq.${TID}&select=instance_name" \
+    -H "apikey: ${PIF_SUPABASE_SERVICE_ROLE_KEY}" \
+    -H "Authorization: Bearer ${PIF_SUPABASE_SERVICE_ROLE_KEY}" \
+    | python3 -c "import sys,json; rows=json.loads(sys.stdin.read()); print(rows[0].get('instance_name','') if rows else '')" 2>/dev/null) || true
+  if [ -n "$INSTANCE" ] && [ -d "/home/$INSTANCE" ]; then
+    echo "/home/$INSTANCE/memory/daily"
   else
-    echo "$HOME/tenants/${TID}/memory/daily"
+    echo "$HOME/tenants/${TID}/memory/daily"  # fallback
   fi
 }
 
@@ -72,15 +83,23 @@ case "$MODE" in
   all)
     # Admin first
     create_daily_note "$HOME/memory/daily"
-    # All provisioned tenants
-    for TDIR in "$HOME/tenants"/*/; do
-      TID=$(basename "$TDIR")
-      if [ "$TID" = "$ADMIN_UUID" ]; then
-        continue  # Already handled via symlink
-      fi
-      if [ -d "${TDIR}memory/daily" ]; then
-        create_daily_note "${TDIR}memory/daily"
-      fi
-    done
+    # All active tenants from Supabase
+    TENANTS=$(curl -s "${PIF_SUPABASE_URL}/rest/v1/tenants?select=id,instance_name&status=neq.pending_onboarding" \
+      -H "apikey: ${PIF_SUPABASE_SERVICE_ROLE_KEY}" \
+      -H "Authorization: Bearer ${PIF_SUPABASE_SERVICE_ROLE_KEY}" \
+      | python3 -c "
+import sys, json
+rows = json.loads(sys.stdin.read())
+for r in rows:
+    tid = r.get('id','')
+    inst = r.get('instance_name','')
+    if tid and inst:
+        print(f'{tid} {inst}')
+" 2>/dev/null) || true
+    while IFS=' ' read -r TID INSTANCE; do
+      [ "$TID" = "$ADMIN_UUID" ] && continue
+      [ -d "/home/$INSTANCE" ] || continue
+      create_daily_note "/home/$INSTANCE/memory/daily"
+    done <<< "$TENANTS"
     ;;
 esac

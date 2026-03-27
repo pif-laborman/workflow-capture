@@ -14,6 +14,22 @@ set -euo pipefail
 source ~/.pif-env
 source ~/scripts/brief-lib.sh
 
+# Resolve the home directory for a tenant by UUID
+tenant_home() {
+  local TID="$1"
+  if [ "$TID" = "$ADMIN_UUID" ]; then
+    echo "$HOME"
+    return
+  fi
+  local INSTANCE
+  INSTANCE=$(curl -s "${PIF_SUPABASE_URL}/rest/v1/tenants?id=eq.${TID}&select=instance_name"     -H "apikey: ${PIF_SUPABASE_SERVICE_ROLE_KEY}"     -H "Authorization: Bearer ${PIF_SUPABASE_SERVICE_ROLE_KEY}"     | python3 -c "import sys,json; rows=json.loads(sys.stdin.read()); print(rows[0].get('instance_name','') if rows else '')" 2>/dev/null) || true
+  if [ -n "$INSTANCE" ] && [ -d "/home/$INSTANCE" ]; then
+    echo "/home/$INSTANCE"
+  else
+    echo "$HOME/tenants/${TID}"  # fallback
+  fi
+}
+
 LOG="/root/logs/nightly-consolidation.log"
 TS=$(date '+%Y-%m-%d %H:%M')
 TODAY=$(date +%Y-%m-%d)
@@ -62,11 +78,7 @@ consolidate_tenant() {
   local TID="$1"
   local TENANT_DIR
 
-  if [ "$TID" = "$ADMIN_UUID" ]; then
-    TENANT_DIR="$HOME"
-  else
-    TENANT_DIR="$HOME/tenants/${TID}"
-  fi
+  TENANT_DIR=$(tenant_home "$TID")
 
   local DAILY_NOTE="${TENANT_DIR}/memory/daily/${TODAY}.md"
   if [ ! -f "$DAILY_NOTE" ]; then

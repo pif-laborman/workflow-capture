@@ -111,6 +111,13 @@ else:
   eval "$RAW"
   export BRIEF_NAME BRIEF_MODEL BRIEF_DELIVERY_CHANNEL BRIEF_DELIVERY_TARGET
   export BRIEF_SECTIONS BRIEF_TIMEZONE BRIEF_TENANT_ID BRIEF_PROMPT_FILE
+
+  # Load instance_name so _tenant_memory() can resolve the correct home dir
+  if ! _is_admin_tenant; then
+    BRIEF_INSTANCE_NAME=$(sb_get "tenants?id=eq.${BRIEF_TENANT_ID}&select=instance_name" | \
+      python3 -c "import sys,json; rows=json.loads(sys.stdin.read()); print(rows[0].get('instance_name','') if rows else '')" 2>/dev/null) || true
+    export BRIEF_INSTANCE_NAME
+  fi
 }
 
 # --- Delivery ---
@@ -164,7 +171,7 @@ if m:
 }
 
 # --- Tenant memory root resolver ---
-# Admin tenant (Pif) uses ~/memory. All others use ~/tenants/<id>/memory.
+# Admin tenant (Pif) uses ~/memory. All others use /home/<instance_name>/memory.
 _ADMIN_TENANT_ID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
 _is_admin_tenant() {
   [ -z "${BRIEF_TENANT_ID:-}" ] || [ "${BRIEF_TENANT_ID}" = "$_ADMIN_TENANT_ID" ]
@@ -173,7 +180,12 @@ _tenant_memory() {
   if _is_admin_tenant; then
     echo "$HOME/memory"
   else
-    echo "$HOME/tenants/${BRIEF_TENANT_ID}/memory"
+    local INSTANCE="${BRIEF_INSTANCE_NAME:-}"
+    if [ -n "$INSTANCE" ] && [ -d "/home/$INSTANCE" ]; then
+      echo "/home/$INSTANCE/memory"
+    else
+      echo "$HOME/tenants/${BRIEF_TENANT_ID}/memory"  # fallback
+    fi
   fi
 }
 
