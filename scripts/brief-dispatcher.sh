@@ -90,8 +90,8 @@ for b in briefs:
       ;;
   esac
 
-  # Run in background so one brief doesn't block others
-  bash "$SCRIPT" --brief-id "$BRIEF_ID" >> "$LOG" 2>&1 &
+  # Run detached so systemd oneshot exit doesn't kill the child
+  nohup setsid bash "$SCRIPT" --brief-id "$BRIEF_ID" >> "$LOG" 2>&1 &
   log "Started ${BRIEF_NAME} (pid $!)"
 done
 
