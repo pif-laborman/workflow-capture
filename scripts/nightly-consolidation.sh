@@ -159,12 +159,17 @@ PROMPT_EOF
   }
 
   log "Tenant ${TID:0:8}: Consolidation done: $(echo "$OUTPUT" | tail -3)"
+
+  # Update and embed qmd index for this tenant
+  local INSTANCE; INSTANCE=$(basename "$TENANT_DIR")
+  HOME="$TENANT_DIR" qmd update >> "$LOG" 2>&1 &&     HOME="$TENANT_DIR" qmd embed >> "$LOG" 2>&1 &&     log "Tenant ${TID:0:8}: QMD index updated" ||     log "WARN: Tenant ${TID:0:8}: qmd update/embed failed (non-fatal)"
 }
 
 # --- System maintenance (Pif-only) ---
 run_system_maintenance() {
   # QMD index rebuild
   qmd update >> "$LOG" 2>&1 || log "WARN: qmd update failed (non-fatal)"
+  qmd embed >> "$LOG" 2>&1 || log "WARN: qmd embed failed (non-fatal)"
 
   # Supabase retention cleanup
   SB_KEY="${PIF_SUPABASE_SERVICE_ROLE_KEY:-$(pif-creds get Supabase 2>/dev/null)}"
