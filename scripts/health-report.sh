@@ -40,8 +40,14 @@ else
     TELEGRAM_STATUS="stale"
 fi
 
-# Slack: check journal for recent Socket Mode session
-SLACK_LAST=$(journalctl -u meetpif-messaging.service --since "2 hours ago" --no-pager 2>/dev/null | grep -c "slack_bolt" || true)
+# Slack: Socket Mode is silent when idle (no periodic log like Telegram getUpdates).
+# Check that the Bolt session was established since the service last started.
+MESSAGING_START=$(systemctl show -p ActiveEnterTimestamp meetpif-messaging.service 2>/dev/null | sed 's/.*=\S* //' | sed 's/ [A-Z]*$//')
+if [ -n "$MESSAGING_START" ]; then
+    SLACK_LAST=$(journalctl -u meetpif-messaging.service --since "$MESSAGING_START" --no-pager 2>/dev/null | grep -c "slack_bolt" || true)
+else
+    SLACK_LAST=0
+fi
 if [ "$SLACK_LAST" -gt 0 ]; then
     SLACK_STATUS="active"
 else
