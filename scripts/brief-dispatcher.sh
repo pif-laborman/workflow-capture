@@ -22,10 +22,11 @@ BRIEFS=$(sb_get "briefs?enabled=eq.true&select=id,name,cron_expression,timezone"
   exit 1
 }
 
-# Check if any are due
+# Check if any are due (window-based: fired if cron matched any minute in last 6min)
+# Marker files in /tmp prevent double-firing within the same window.
 echo "$BRIEFS" | python3 -c "
-import sys, json
-from datetime import datetime, timezone
+import sys, json, os
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 briefs = json.loads(sys.stdin.read())
@@ -50,23 +51,34 @@ def cron_field_matches(field_val, cron_val):
                 return True
     return False
 
-def cron_matches_now(cron_expr, tz_name):
+def cron_matches_time(cron_expr, t):
     parts = cron_expr.strip().split()
     if len(parts) != 5:
         return False
-    try:
-        now = datetime.now(ZoneInfo(tz_name))
-    except Exception:
-        now = datetime.now(timezone.utc)
-    fields = [now.minute, now.hour, now.day, now.month, (now.weekday() + 1) % 7]
+    fields = [t.minute, t.hour, t.day, t.month, (t.weekday() + 1) % 7]
     for field_val, cron_val in zip(fields, parts):
         if not cron_field_matches(field_val, cron_val):
             return False
     return True
 
+def was_due_recently(cron_expr, tz_name, window_minutes=6):
+    try:
+        now = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        now = datetime.now(timezone.utc)
+    for offset in range(window_minutes):
+        t = (now - timedelta(minutes=offset)).replace(second=0, microsecond=0)
+        if cron_matches_time(cron_expr, t):
+            return t
+    return None
+
 for b in briefs:
-    if cron_matches_now(b['cron_expression'], b.get('timezone', 'UTC')):
-        print(f'{b[\"id\"]}|{b[\"name\"]}')
+    due_at = was_due_recently(b['cron_expression'], b.get('timezone', 'UTC'))
+    if due_at:
+        marker = f'/tmp/brief-{b[\"id\"]}-{due_at.strftime(\"%Y%m%d%H%M\")}.ran'
+        if not os.path.exists(marker):
+            open(marker, 'w').close()
+            print(f'{b[\"id\"]}|{b[\"name\"]}')
 " 2>/dev/null | while IFS='|' read -r BRIEF_ID BRIEF_NAME; do
   log "Brief due: ${BRIEF_NAME} (${BRIEF_ID})"
 
