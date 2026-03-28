@@ -103,7 +103,7 @@ Two systems for accessing Nango tokens through MC — **never expose Nango direc
 - Response: `{ "access_token": "...", "provider": "google-mail", "expires_at": "..." }`
 - Supports all Nango auth modes: OAuth, API_KEY, BASIC
 
-**For admin Pif (this instance):** Use the tenant Pif API with admin tenant_id, or the env vars still injected by comment-listener (`$CONNECTOR_TOKEN_GOOGLE_MAIL`, etc.).
+**For admin Pif (this instance):** Use the tenant Pif API with admin tenant_id, or the env vars injected by meetpif-messaging (`$CONNECTOR_TOKEN_GOOGLE_MAIL`, etc.).
 
 **Source files:**
 - Frontend routes: `/opt/assistant-platform/mc/server/src/routes/connectors.ts`
@@ -278,7 +278,7 @@ audio_path, status = client.predict(
 | Service | Port | Purpose |
 |---------|------|---------|
 | claude-telegram.service | — | Telegram bot with Claude Code agent (pinned v1.3.0 + 7 patches) |
-| comment-listener.service | — | Realtime task comment → Claude session spawner |
+| meetpif-messaging.service | — | Multi-channel messaging: Telegram, Slack, task comments (Supabase Realtime) |
 | mission-control-api.service | 8091 | Mission Control API (Express backend) |
 | nginx.service | 80/443/8090 | Reverse proxy — meetpif.com (Cloudflare Origin CA) |
 | resend-webhook.service | 8092 | Inbound email webhook → forward to Gmail |
@@ -297,7 +297,7 @@ audio_path, status = client.predict(
 | antfarm-dispatch.py | Process antfarm workflow steps |
 | antfarm-evaluator.py | Evaluate antfarm step outputs |
 | pif-creds.js | Fetch & decrypt credentials from logins table (`pif-creds get <service>`) |
-| comment-listener.js | Listen for task comments, spawn Claude sessions to respond |
+| comment-listener.js | RETIRED — replaced by comments_bot.py in meetpif-messaging |
 | check-inbox.sh | Monitor inbox directory |
 | ensure-daily-note.sh | Create daily note if missing |
 | health-report.sh | Generate system health report |

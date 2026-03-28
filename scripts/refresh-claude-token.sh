@@ -1,13 +1,12 @@
 #\!/bin/bash
-# Refresh Claude OAuth token to keep antfarm agents alive.
+# Refresh Claude OAuth tokens for root + all provisioned tenants.
 # Runs every ~50 min via Supabase schedule → pif-runner.
 #
-# Strategy (v2 — direct OAuth, no claude -p dependency):
-#   1. Read refresh_token from credentials.json
-#   2. POST to platform.claude.com/v1/oauth/token directly
-#   3. Write new access_token + refresh_token back to credentials.json
-#   4. Sync credentials to Ralph user
-#   5. On failure, retry once then alert (dedup — max 1 per hour)
+# Strategy (v3 — per-identity refresh):
+#   1. Refresh root token (for admin agents, Ralph)
+#   2. Loop over /home/*/claude/.credentials.json — each tenant refreshes
+#      their own token independently (different Claude accounts)
+#   3. On failure, retry once then alert (dedup — max 1 per hour)
 
 export PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export HOME=/root
@@ -143,6 +142,15 @@ if [ $EXIT_CODE -eq 0 ]; then
         log "Synced credentials to Ralph (symlink missing — copied instead)"
     fi
 
+    # Sync to admin tenant pif (same Pavol account — copy, don't refresh separately)
+    PIF_CREDS="/home/pif/.claude/.credentials.json"
+    if [ -d "$(dirname "$PIF_CREDS")" ]; then
+        cp "$CREDS" "$PIF_CREDS" 2>/dev/null
+        chown pif:pif "$PIF_CREDS" 2>/dev/null
+        chmod 600 "$PIF_CREDS" 2>/dev/null
+        log "Synced credentials to admin tenant pif"
+    fi
+
     rm -f "$ALERT_STAMP"
 else
     STDERR_CONTENT=""
@@ -172,3 +180,45 @@ else
         date +%s > "$ALERT_STAMP"
     fi
 fi
+
+# --- Refresh tenant tokens (each tenant has their own Claude account) ---
+for TENANT_CREDS in /home/*/.claude/.credentials.json; do
+    [ -f "$TENANT_CREDS" ] || continue
+
+    TENANT_DIR=$(dirname "$(dirname "$TENANT_CREDS")")
+    TENANT_USER=$(basename "$TENANT_DIR")
+
+    # Skip ralph (symlink to root) and pif (admin tenant, same account — synced above)
+    [ "$TENANT_USER" = "ralph" ] && continue
+    [ "$TENANT_USER" = "pif" ] && continue
+
+    # Skip if symlinked to root (same account, already refreshed)
+    if [ -L "$TENANT_CREDS" ]; then
+        log "Tenant $TENANT_USER: symlinked — skipping"
+        continue
+    fi
+
+    # Check if token has a refresh token at all
+    HAS_REFRESH=$(python3 -c "import json; d=json.load(open('$TENANT_CREDS')); print('yes' if d.get('claudeAiOauth',{}).get('refreshToken') else 'no')" 2>/dev/null)
+    if [ "$HAS_REFRESH" != "yes" ]; then
+        log "Tenant $TENANT_USER: no refresh token — skipping"
+        continue
+    fi
+
+    export CREDS_PATH="$TENANT_CREDS"
+    TENANT_RESULT=$(attempt_refresh 2>/tmp/token-refresh-tenant-stderr)
+    TENANT_RC=$?
+
+    if [ $TENANT_RC -eq 0 ]; then
+        # Fix ownership (attempt_refresh writes as root)
+        chown "$TENANT_USER:$TENANT_USER" "$TENANT_CREDS" 2>/dev/null
+        chmod 600 "$TENANT_CREDS" 2>/dev/null
+        log "Tenant $TENANT_USER: token refreshed — $TENANT_RESULT"
+    else
+        TENANT_ERR=$(cat /tmp/token-refresh-tenant-stderr 2>/dev/null)
+        log "Tenant $TENANT_USER: refresh failed (exit $TENANT_RC): $TENANT_ERR"
+    fi
+done
+
+# Restore CREDS_PATH for any future calls
+export CREDS_PATH="$CREDS"
