@@ -90,9 +90,11 @@ for b in briefs:
       ;;
   esac
 
-  # Run detached so systemd oneshot exit doesn't kill the child
-  nohup setsid bash "$SCRIPT" --brief-id "$BRIEF_ID" >> "$LOG" 2>&1 &
-  log "Started ${BRIEF_NAME} (pid $!)"
+  # Spawn as independent transient systemd unit — survives dispatcher service exit
+  systemd-run --no-block --unit="brief-${BRIEF_NAME}-${BRIEF_ID:0:8}" \
+    --setenv=HOME=/root \
+    bash "$SCRIPT" --brief-id "$BRIEF_ID" >> "$LOG" 2>&1
+  log "Started ${BRIEF_NAME} (unit: brief-${BRIEF_NAME}-${BRIEF_ID:0:8})"
 done
 
 log "Dispatcher check complete"
