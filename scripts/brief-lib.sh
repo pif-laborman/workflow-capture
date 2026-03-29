@@ -392,6 +392,7 @@ section_git_activity() {
 }
 
 section_recent_commits() {
+  if ! _is_admin_tenant; then echo "=== RECENT COMMITS === (skipped — tenant scope)"; return 0; fi
   echo "=== RECENT COMMITS (since last brief) ==="
   local LOG="$HOME/memory/.recent-commits.log"
   if [ -f "$LOG" ] && [ -s "$LOG" ]; then
