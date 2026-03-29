@@ -13,7 +13,12 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 
 ## Credentials
 
-**Single source of truth:** Mission Control's `logins` table (AES-256-GCM encrypted).
+**Two credential sources — check BOTH before saying a key isn't available:**
+
+1. **`pif-creds`** — Mission Control's `logins` table (AES-256-GCM encrypted). For passwords, API keys stored manually.
+2. **Nango connectors** — OAuth tokens and API keys linked via the Connectors UI. These are NOT in pif-creds. Use the Connector Token API to list and fetch them (see below).
+
+**Rule:** Never tell Pavol a credential is missing without first checking both `pif-creds list` AND `GET /api/connector-token` (Nango).
 
 `~/.pif-env` holds only the **bootstrap trio** needed to reach the logins table:
 
