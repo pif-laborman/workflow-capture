@@ -38,7 +38,7 @@ else
   # Pif defaults
   MODEL="haiku"
   PROMPT_FILE="$DEFAULT_PROMPT"
-  SECTIONS="daily_notes working_state inbox git_activity session_activity skills_changes deployments tasks workflows system_health events"
+  SECTIONS="daily_notes working_state recent_commits inbox git_activity session_activity skills_changes deployments tasks workflows system_health events"
   BRIEF_TENANT_ID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
   export BRIEF_TENANT_ID
 fi

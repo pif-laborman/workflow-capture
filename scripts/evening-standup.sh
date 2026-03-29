@@ -38,7 +38,7 @@ if [ -n "$BRIEF_ID" ]; then
 else
   # Pif defaults
   MODEL="sonnet"
-  SECTIONS="daily_notes working_state learnings telegram_history tasks workflows events proposals"
+  SECTIONS="daily_notes working_state recent_commits learnings telegram_history tasks workflows events proposals"
   BRIEF_TENANT_ID="c2818981-bcb9-4fde-83d8-272d72c7a3d1"
   export BRIEF_TENANT_ID
 fi

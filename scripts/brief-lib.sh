@@ -391,6 +391,19 @@ section_git_activity() {
   done
 }
 
+section_recent_commits() {
+  echo "=== RECENT COMMITS (since last brief) ==="
+  local LOG="$HOME/memory/.recent-commits.log"
+  if [ -f "$LOG" ] && [ -s "$LOG" ]; then
+    cat "$LOG"
+    echo ""
+    echo "(Use these to verify WORKING.md is current — if a commit shipped something"
+    echo " listed as 'in flight' or 'TODO', it belongs in 'Done today' instead.)"
+  else
+    echo "(no commits logged since last brief)"
+  fi
+}
+
 section_deployments() {
   if ! _is_admin_tenant; then echo "=== DEPLOYMENTS === (skipped — tenant scope)"; return 0; fi
   echo "=== DEPLOYMENTS ==="
