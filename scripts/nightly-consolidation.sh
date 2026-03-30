@@ -128,8 +128,6 @@ You are running nightly knowledge consolidation for tenant ${TID:0:8}. Your job 
 ## Examples of durable facts
 - "Apify account created, username quintillionth_labyrinth, free plan \$5/mo"
 - "Mission Control API runs on port 8091, nginx proxies from 8090"
-- "GOG People API is now enabled in GCP console"
-
 ## Examples of ephemeral (skip these)
 - "Run #15 is currently in planner step"
 - "Heartbeat triage timed out at 15:00"
