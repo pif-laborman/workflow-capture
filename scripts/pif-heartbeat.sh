@@ -90,15 +90,19 @@ JSON_SCHEMA='{"type":"object","properties":{"alerts":{"type":"array","items":{"t
 # Run it first so Haiku triage has fresh data in antfarm_medic_checks.
 # Antfarm needs PIF_SUPABASE_SERVICE_ROLE_KEY (not in .pif-env — fetch via pif-creds).
 
-# ─── Stage 0a: Ralph credential symlink health ───────────────────────
-# If symlink broke (e.g. file was delete+recreated), recreate it
-if [ ! -L /home/ralph/.claude/.credentials.json ]; then
-    log "WARN: Ralph credentials symlink missing — recreating"
+# ─── Stage 0a: Ralph credential health ───────────────────────
+# Ralph's credentials are written by MC server's writeTenantCredentials
+# (synced from admin tenant on every token refresh). No symlink needed.
+# If a stale symlink exists, replace it with a copy from admin tenant.
+if [ -L /home/ralph/.claude/.credentials.json ]; then
+    log "WARN: Ralph has stale symlink — replacing with real file from admin tenant"
     rm -f /home/ralph/.claude/.credentials.json
-    ln -s /root/.claude/.credentials.json /home/ralph/.claude/.credentials.json
-    setfacl -m u:ralph:rw /root/.claude/.credentials.json
-    setfacl -m u:ralph:x /root/.claude
-    notify "Pif Heartbeat: Ralph credential symlink was broken — recreated."
+    if [ -f /home/pif/.claude/.credentials.json ]; then
+        cp /home/pif/.claude/.credentials.json /home/ralph/.claude/.credentials.json
+        chown ralph:ralph /home/ralph/.claude/.credentials.json
+        chmod 600 /home/ralph/.claude/.credentials.json
+        notify "Pif Heartbeat: Replaced stale Ralph symlink with real credentials."
+    fi
 fi
 
 # ─── Stage 0b: Telegram bot patch health ─────────────────────────────
@@ -216,17 +220,6 @@ for alert in d['alerts']:
         r = subprocess.run(['systemctl', 'start', 'mission-control-api'], capture_output=True, timeout=15)
         if r.returncode == 0:
             resolved = True
-
-    # GOG failure — try token refresh
-    elif 'gog' in a or 'google tools' in a:
-        # Attempt gog auth refresh
-        r = subprocess.run(['gog', 'auth', 'refresh'], capture_output=True, timeout=30)
-        if r.returncode == 0:
-            # Verify it works now
-            v = subprocess.run(['gog', 'gmail', 'search', 'test', '--limit', '1'],
-                             capture_output=True, timeout=30)
-            if v.returncode == 0:
-                resolved = True
 
     # Auto-resume failed antfarm runs (max 3 resumes per run to prevent infinite loops)
     elif 'antfarm run' in a and 'failed' in a:
@@ -404,6 +397,11 @@ try:
     session_dir = Path.home() / ".claude" / "projects" / "-root"
     hour_ago_ts = hour_ago.timestamp()
     recent = []
+    # Prompt-like patterns to skip — these are system/brief prompts, not real user messages
+    _skip_patterns = [
+        "# morning brief", "# evening", "# weekly", "you are pif",
+        "heartbeat triggered", "read ~/agents/pif/",
+    ]
     for f in session_dir.glob("*.jsonl"):
         if f.stat().st_mtime >= hour_ago_ts:
             # Extract first user message as topic
@@ -420,8 +418,12 @@ try:
                                     for c in content
                                 )
                             content = content.strip().replace("\n", " ")[:100]
-                            if content and not content.startswith("<"):
-                                recent.append(content)
+                            # Skip empty, XML tags, and system/brief prompts
+                            if not content or content.startswith("<"):
+                                break
+                            if any(p in content.lower() for p in _skip_patterns):
+                                break
+                            recent.append(content)
                             break
                     except Exception:
                         continue
@@ -491,10 +493,10 @@ fi
 
 # ─── Stage 1.75b: Refresh WORKING.md ──────────────────────────────────
 # Haiku reads current WORKING.md + today's daily note, outputs a refreshed
-# version that reflects actual current state. Cheap (~1 Haiku call), prevents
-# the evening standup from regurgitating stale "In flight" / "Blockers".
+# version that reflects actual current state. Opus refreshes it hourly so
+# briefs and standups always reflect reality.
 
-WORKING_REFRESH_TIMEOUT=120
+WORKING_REFRESH_TIMEOUT=300
 
 WORKING_FILE="$HOME/memory/WORKING.md"
 if [ -f "$WORKING_FILE" ] && [ -f "$DAILY_NOTE" ]; then
@@ -504,13 +506,25 @@ if [ -f "$WORKING_FILE" ] && [ -f "$DAILY_NOTE" ]; then
 You are refreshing WORKING.md to reflect the current state. Today is ${TODAY_FORMATTED}.
 
 Rules:
+STRUCTURAL RULE (non-negotiable): Your output MUST preserve the exact document structure. All of these section headers must appear in this order:
+  # WORKING — Pif Laborman
+  ## Active / In Progress
+  ## Awaiting Pavol
+  ## Blockers
+  ## Recently Shipped
+  ## Current Goals
+  ## Improvement Proposals Queue
+If your output is missing ANY of these headers, the output will be rejected and discarded. Never flatten, merge, or remove sections — even if they would be empty.
+
 - Update the date header to today
 - Move completed items out of "Active / In Progress" — if today's notes show something shipped/deployed/merged, it's done
 - Keep "Active / In Progress" items that still have outstanding work
 - Update "Awaiting Pavol" only if today's notes show a decision was made
-- Do NOT add new items — only reclassify existing ones based on evidence in today's notes
-- Do NOT change "Improvement Proposals Queue" — leave it as-is
-- Keep the same markdown structure and section headers
+- PRESERVE all existing items by default. Only move an item to "Recently Shipped" if today's notes explicitly show it was shipped/deployed/merged.
+- Do NOT add new items — only reclassify existing ones based on evidence in today's notes.
+- Do NOT remove items just because the daily note doesn't mention them — absence of mention is NOT evidence of completion.
+- Do NOT re-add items that were removed — if something is missing from WORKING.md, it was deliberately deleted. Respect deletions.
+- Do NOT invent information. If the daily note doesn't mention it, keep the item as-is.
 - Be concise — this is a state document, not a narrative
 
 Current WORKING.md:
@@ -523,17 +537,34 @@ Output ONLY the updated WORKING.md content. No preamble, no explanation.
 WORKING_PROMPT
 
     REFRESHED=$(timeout "${WORKING_REFRESH_TIMEOUT}s" cat "$WORKING_PROMPT_FILE" | \
-      claude --model haiku --print --no-session-persistence 2>>"$LOG") || {
+      claude --model opus --print --no-session-persistence 2>>"$LOG") || {
         log "WARN: WORKING.md refresh failed (non-fatal)"
         REFRESHED=""
     }
     rm -f "$WORKING_PROMPT_FILE"
 
-    if [ -n "$REFRESHED" ] && [ ${#REFRESHED} -gt 100 ]; then
+    # Structural validation: reject output missing required sections
+    REQUIRED_SECTIONS=("## Active / In Progress" "## Awaiting Pavol" "## Blockers" "## Recently Shipped" "## Current Goals" "## Improvement Proposals Queue")
+    STRUCTURE_OK=true
+    for section in "${REQUIRED_SECTIONS[@]}"; do
+        if ! echo "$REFRESHED" | grep -qF "$section"; then
+            log "WARN: WORKING.md refresh REJECTED — missing section: $section"
+            STRUCTURE_OK=false
+            break
+        fi
+    done
+
+    if [ -n "$REFRESHED" ] && [ ${#REFRESHED} -gt 100 ] && [ "$STRUCTURE_OK" = true ]; then
+        # Backup before overwrite
+        cp "$WORKING_FILE" "${WORKING_FILE}.bak"
         echo "$REFRESHED" > "$WORKING_FILE"
-        log "WORKING.md refreshed by Haiku (${#REFRESHED} chars)"
+        log "WORKING.md refreshed by Opus (${#REFRESHED} chars)"
     else
-        log "WORKING.md refresh skipped — output too short or empty"
+        if [ "$STRUCTURE_OK" = false ]; then
+            log "WORKING.md refresh rejected — structural validation failed. Original preserved."
+        else
+            log "WORKING.md refresh skipped — output too short or empty"
+        fi
     fi
 fi
 
