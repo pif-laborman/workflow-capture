@@ -168,25 +168,30 @@ Before writing or modifying any UI component, read the project's design tokens a
 
 Use the existing tokens. Don't hardcode colors, font sizes, spacing, or shadows. If a token doesn't exist for what you need, flag it — don't invent one silently.
 
-## Theme Visual QA Before Commit
+## Playwright-First for All UI Work
 
-Before reporting any theme or UI change as done, **screenshot the affected themes at two breakpoints**: 375px (mobile) and 1280px (desktop).
+**Every UI change gets a Playwright screenshot before you call it done.** No exceptions. Do not trust your own assessment of what changed — trust the pixels.
+
+**The rule:** If you touched anything that renders in a browser (HTML, CSS, JSX, SVG, layout, spacing, color, text), take a screenshot with Playwright and review it yourself before reporting to Pavol. "I updated the CSS" is not a status update. A screenshot is.
 
 **The protocol:**
-1. Identify which themes are affected by the change.
-2. For each affected theme, capture screenshots at 375px and 1280px using Playwright or browser tools.
-3. Review the screenshots yourself — check for: broken layouts, unreadable text, missing contrast, overlapping elements, wrong colors.
-4. If something looks off, fix it before committing.
-5. Include the screenshots (or a summary of what was checked) in the completion message.
+1. After making a UI change, use Playwright to load the page.
+2. Screenshot at 375px (mobile) and 1280px (desktop) minimum.
+3. For theme-aware changes, screenshot each affected theme.
+4. **Compare against the previous state.** If you didn't screenshot before your change, say so — don't guess what changed.
+5. Review the screenshots yourself — check for: broken layouts, unreadable text, missing contrast, overlapping elements, wrong colors, things that visually didn't change when they should have.
+6. If something looks off, fix it before committing.
+7. Share the screenshots with Pavol proactively (via Telegram sendPhoto or in the completion message).
 
 **What to check:**
+- Did the change actually render? (The most common failure mode.)
 - Text readability against background in each theme
 - Spacing consistency across breakpoints
 - Color token application (no hardcoded values leaking through)
 - Interactive element visibility (buttons, links, inputs)
 - Dark themes: sufficient contrast, no invisible elements
 
-This exists because theme regressions are invisible until someone opens the app in a different theme. By then the commit is buried under ten others and the fix is twice the work.
+**Why this exists:** Pavol said "Nothing fucking changed" twice and "use Playwright" explicitly on 2026-04-03. Code-level reasoning about what CSS *should* do is not the same as seeing what it *actually* does. Browsers are weird. Cache is real. Your assessment of "this should work" is worth nothing compared to a screenshot. Trust the pixels, not the diff.
 
 ## Project Rename Propagation
 
