@@ -148,14 +148,9 @@ if [ $EXIT_CODE -eq 0 ]; then
         log "Synced credentials to Ralph (symlink missing — copied instead)"
     fi
 
-    # Sync to admin tenant pif (same Pavol account — copy, don't refresh separately)
-    PIF_CREDS="/home/pif/.claude/.credentials.json"
-    if [ -d "$(dirname "$PIF_CREDS")" ]; then
-        cp "$CREDS" "$PIF_CREDS" 2>/dev/null
-        chown pif:pif "$PIF_CREDS" 2>/dev/null
-        chmod 600 "$PIF_CREDS" 2>/dev/null
-        log "Synced credentials to admin tenant pif"
-    fi
+    # Pif is a tenant — credentials managed by MC server's claude-config endpoint
+    # via tenant_claude_credentials table. Do NOT copy root's token here — it
+    # would invalidate the DB's refresh token and break the DB-backed flow.
 
     rm -f "$ALERT_STAMP"
 else

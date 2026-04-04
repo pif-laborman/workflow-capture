@@ -372,14 +372,9 @@ def execute_agent(agent_name: str, role: str, prompt: str, repo: str,
 
     try:
         if config["user"] == "ralph":
-            # Ensure ralph can read the shared credentials file (chmod 600 from
-            # token refresh wipes ACL mask — re-apply before each run)
-            creds_file = "/root/.claude/.credentials.json"
-            if os.path.exists(creds_file):
-                subprocess.run(
-                    ["setfacl", "-m", "u:ralph:rw,m::rw", creds_file],
-                    timeout=5, capture_output=True,
-                )
+            # Ralph's credentials are at /home/ralph/.claude/.credentials.json
+            # Written by MC server's writeTenantCredentials on admin token refresh.
+            # Owned by ralph — no ACL needed.
             cmd_str = " ".join(config["cmd"])
             shell_cmd = (
                 f'unset CLAUDECODE; cd "{repo}" && {cmd_str} < "{prompt_file}"'

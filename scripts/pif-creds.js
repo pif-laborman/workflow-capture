@@ -23,6 +23,7 @@ const SB_URL = process.env.PIF_SUPABASE_URL
 const SB_ANON_KEY = process.env.PIF_SUPABASE_ANON_KEY
 const SB_SERVICE_ROLE_KEY = process.env.PIF_SUPABASE_SERVICE_ROLE_KEY
 const CREDS_PASSWORD = process.env.PIF_CREDS_PASSWORD
+const CREDS_READ_TOKEN = process.env.PIF_CREDS_READ_TOKEN
 
 // MC API for write operations
 const MC_API_URL = process.env.MC_API_URL || 'https://meetpif.com'
@@ -73,7 +74,7 @@ function decrypt(encoded, password) {
 async function fetchLogins(filter) {
   // Tenant Pifs use the RPC function (RLS blocks direct table access for anon key)
   if (PIF_TENANT_ID) {
-    const body = { p_tenant_id: PIF_TENANT_ID }
+    const body = { p_tenant_id: PIF_TENANT_ID, p_token: CREDS_READ_TOKEN }
     if (filter) body.p_service_name = filter
     const res = await fetch(
       `${SB_URL}/rest/v1/rpc/get_tenant_logins`,
