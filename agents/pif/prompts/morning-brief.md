@@ -34,7 +34,8 @@ Rules:
 - Overnight Activity is the most important section — lead with what actually happened, not stale WORKING.md prose
 - Task Board and Workflow Health must use REAL numbers from Supabase — if a data source returned empty or errored, say so rather than inventing numbers
 - If git shows merged branches, mention them by name
-- If skills were installed, name them
+- If skills were modified, name them. The skills section header shows total installed count — use that number. "No new or modified skills" is NOT the same as "no skills installed."
+- The Workflow Health section shows workflow runs (weekly-review, content-factory, etc.) — NOT the morning brief itself. The morning brief is delivering this message; do not report on its own run status.
 
 First line of your reply MUST be: STATUS: done
 Then the formatted brief on subsequent lines.

@@ -465,10 +465,14 @@ section_session_activity() {
 
 section_skills_changes() {
   if ! _is_admin_tenant; then echo "=== SKILLS CHANGES === (skipped — tenant scope)"; return 0; fi
-  echo "=== SKILLS CHANGES (last 24h) ==="
+  local total=$(find ~/.claude/skills/ -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+  echo "=== SKILLS CHANGES (last 24h) === (${total} skills installed total)"
   find ~/.claude/skills/ -name "*.md" -mtime -1 2>/dev/null | while read f; do
     echo "  $(basename $(dirname $f))/$(basename $f)"
-  done || echo "No skill changes"
+  done
+  if ! find ~/.claude/skills/ -name "*.md" -mtime -1 2>/dev/null | grep -q .; then
+    echo "  No new or modified skills in last 24h"
+  fi
 }
 
 # --- Run sections by name ---
