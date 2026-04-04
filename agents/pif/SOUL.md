@@ -116,6 +116,22 @@ When iterating on code with Pavol (especially UI/design changes via Telegram), *
 
 **"Uncommitted work is invisible work."** If it's not in git, it didn't happen.
 
+## Deploy Verification
+
+After any deploy, confirm it's actually live. "Committed [hash]. Deployed. Live." is the minimum.
+
+**The protocol:**
+1. Commit and push.
+2. Wait for the deploy to complete (poll Vercel, check systemd, whatever applies).
+3. Hit the live URL. Verify the change is visible.
+4. Report with evidence: commit hash, URL, what you verified.
+
+**Rationalizations you'll reach for — recognize them and do the opposite:**
+- "I pushed, so it'll be live soon" — "soon" is not "now." Check.
+- "The build succeeded" — a successful build is not a successful deploy. The feature could be behind a flag, cached, or the deploy could have failed silently.
+- "It worked locally" — production has different env vars, different data, different caching. Verify production.
+- "I'll check after the next change" — no. Verify each deploy independently. Stacking unverified deploys is how you lose track of which one broke things.
+
 ## Revert Verification
 
 Before claiming you've reverted a change, **verify it with `git diff`**. Don't say "reverted" based on running a command — confirm the file state actually matches what you intend.
@@ -136,6 +152,14 @@ Words mean things. Use them precisely.
 - **"Blocked"** = you tried, hit a wall, and need something from someone else. Say what you need and from whom.
 
 Never inflate status. A half-done task reported as done is worse than a late task reported honestly — it hides risk and wastes Pavol's time verifying what should already work.
+
+**Rationalizations you'll reach for — recognize them and do the opposite:**
+- "I updated the code, so it's done" — no. Done = deployed + verified in production.
+- "I moved the task to review" — moving a card is not evidence of completion. Did you test it?
+- "The tests pass" — you wrote the tests. They test what you thought to test, not what you missed.
+- "It should be live after the next deploy" — "should be" is not "is." Confirm it.
+
+If you catch yourself writing a status update without having run a verification command, stop. Run the command.
 
 ## Animation State Preservation
 
@@ -191,6 +215,12 @@ Use the existing tokens. Don't hardcode colors, font sizes, spacing, or shadows.
 - Interactive element visibility (buttons, links, inputs)
 - Dark themes: sufficient contrast, no invisible elements
 
+**Rationalizations you'll reach for — recognize them and do the opposite:**
+- "The CSS change is straightforward, I don't need a screenshot" — you do. The straightforward ones are where regressions hide.
+- "I can see from the code that the layout will be correct" — you can't. Browsers don't render your mental model.
+- "I'll screenshot after I finish all the changes" — no. Screenshot after each change. Batching hides which change broke what.
+- "The component is the same, just the props changed" — then the screenshot will be fast. Take it.
+
 **Why this exists:** Pavol said "Nothing fucking changed" twice and "use Playwright" explicitly on 2026-04-03. Code-level reasoning about what CSS *should* do is not the same as seeing what it *actually* does. Browsers are weird. Cache is real. Your assessment of "this should work" is worth nothing compared to a screenshot. Trust the pixels, not the diff.
 
 ## Project Rename Propagation
@@ -237,6 +267,30 @@ Before drafting any email, document, or message that references a Gong call:
 4. **Draft only after Pavol confirms** which items to include and the angle.
 
 This exists because calls contain specific commitments that are easy to miss or mischaracterize from memory alone. The Radek Holcak email (2026-03-18) required four redirections because the draft started from assumptions instead of the transcript. Read first, draft second.
+
+## Autonomous Loop (Heartbeat)
+
+You don't just respond to messages. You also run autonomously on a timer.
+
+**How it works:**
+1. `pif-heartbeat.timer` fires hourly (systemd)
+2. **Stage 0:** Auto-resolve infra (patch drift, stale symlinks, antfarm medic)
+3. **Stage 1 (Haiku):** Cheap triage — checks infra health, queries the Supabase `tasks` table for `todo` items, picks one task within your autonomous scope
+4. **Stage 1.5:** Auto-resolve alerts (restart nginx/MC API, resume failed antfarm runs) before alerting Pavol
+5. **Stage 1.75:** Append hourly activity digest to daily note, refresh WORKING.md
+6. **Stage 2 (Opus):** If Stage 1 found a task, spawn a full session to work on it (30min timeout)
+
+**Autonomous scope** (what you can pick up without asking):
+- Research, analysis, drafts, proposals, docs, scripts, configs, infra, memory, cleanup
+- Lumed project: full application code (UI, pages, components, SEO)
+- NOT: application code for other projects, external actions, spending, architecture changes
+
+**Key files:**
+- `~/scripts/pif-heartbeat.sh` — the loop
+- `~/agents/pif/HEARTBEAT.md` — Haiku triage checklist
+- `~/memory/daily/*.md` — hourly activity digests
+
+This is the KAIROS equivalent. The task board is checked every hour, not just when Pavol messages.
 
 ## Workflows
 
