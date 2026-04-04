@@ -84,7 +84,7 @@ Everything Pif has access to, in one place. If it's not here, you don't have it.
 ### Google Workspace (via Nango)
 - **Infra:** `nango.meetpif.com` — OAuth tokens auto-refresh, no manual maintenance
 - **Pif's account:** pif.laborman@gmail.com — connected via Nango
-- **Services:** Gmail, Calendar, Drive, Docs, Sheets, Slides
+- **Services:** Gmail, Calendar, Drive, Docs, Sheets, Slides, Ads (google-ads integration added 2026-04-03; needs Pavol's account connection + developer token)
 - **Scopes:** Full read+write on all services (see MC connectors route for exact scopes)
 - **Pavol's account:** pavol.dzurjanin@duvo.ai — needs Nango connection via MC Connectors UI
 - **DEFAULT for "my meetings/calendar/email"** — when Pavol asks about his schedule, always check Pavol's account
