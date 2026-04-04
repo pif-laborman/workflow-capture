@@ -10,7 +10,7 @@ CRITICAL: You have very few turns. Run the single command below in your FIRST to
 Run this exact command (copy-paste, do not split it):
 
 ```bash
-SB_URL="${PIF_SUPABASE_URL}" && SB_KEY="${PIF_SUPABASE_ANON_KEY}" && TID="${PIF_TENANT_ID}" && SB_SRK="${PIF_SUPABASE_SERVICE_ROLE_KEY:-$(pif-creds get Supabase 2>/dev/null)}" && echo "=== INFRA ===" && echo "BOT_STATUS=$(systemctl is-active claude-telegram)" && echo "NGINX_STATUS=$(systemctl is-active nginx)" && echo "MC_API_STATUS=$(systemctl is-active mission-control-api)" && echo "DISK_PCT=$(df -h / | awk 'NR==2 {print $5}')" && echo "RAM_PCT=$(free | awk '/Mem:/ {printf "%.0f", $3/$2 * 100}')" && echo "GOG_OK=$(source ~/.pif-env && export GOG_KEYRING_PASSWORD=$(pif-creds get 'GOG (Google Workspace CLI)' 2>/dev/null) && export GOG_ACCOUNT=pif.laborman@gmail.com && gog gmail search 'test' --limit 1 >/dev/null 2>&1 && echo 'yes' || echo 'no')" && echo "DAILY_NOTE=$(test -f ~/memory/daily/$(date +%Y-%m-%d).md && echo exists || echo missing)" && echo "NOW=$(date +%s)" && echo "=== MEDIC ===" && curl -s "${SB_URL}/rest/v1/antfarm_medic_checks?select=checked_at,summary,issues_found,actions_taken&order=checked_at.desc&limit=1" -H "apikey: ${SB_SRK}" -H "Authorization: Bearer ${SB_SRK}" && echo "" && echo "=== STALE_HIGH ===" && curl -s "${SB_URL}/rest/v1/rpc/get_tenant_tasks" -H "apikey: ${SB_KEY}" -H "Authorization: Bearer ${SB_KEY}" -H "Content-Type: application/json" -d "{\"p_tenant_id\": \"${TID}\", \"p_statuses\": [\"todo\"]}" && echo "" && echo "=== ANTFARM_RUNS ===" && antfarm workflow runs 2>&1 | head -10 && echo "" && echo "=== TODO_TASKS ===" && curl -s "${SB_URL}/rest/v1/rpc/get_tenant_tasks" -H "apikey: ${SB_KEY}" -H "Authorization: Bearer ${SB_KEY}" -H "Content-Type: application/json" -d "{\"p_tenant_id\": \"${TID}\", \"p_statuses\": [\"todo\"]}"
+SB_URL="${PIF_SUPABASE_URL}" && SB_KEY="${PIF_SUPABASE_ANON_KEY}" && TID="${PIF_TENANT_ID}" && SB_SRK="${PIF_SUPABASE_SERVICE_ROLE_KEY:-$(pif-creds get Supabase 2>/dev/null)}" && echo "=== INFRA ===" && echo "BOT_STATUS=$(systemctl is-active claude-telegram)" && echo "NGINX_STATUS=$(systemctl is-active nginx)" && echo "MC_API_STATUS=$(systemctl is-active mission-control-api)" && echo "DISK_PCT=$(df -h / | awk 'NR==2 {print $5}')" && echo "RAM_PCT=$(free | awk '/Mem:/ {printf "%.0f", $3/$2 * 100}')" && echo "DAILY_NOTE=$(test -f ~/memory/daily/$(date +%Y-%m-%d).md && echo exists || echo missing)" && echo "NOW=$(date +%s)" && echo "=== MEDIC ===" && curl -s "${SB_URL}/rest/v1/antfarm_medic_checks?select=checked_at,summary,issues_found,actions_taken&order=checked_at.desc&limit=1" -H "apikey: ${SB_SRK}" -H "Authorization: Bearer ${SB_SRK}" && echo "" && echo "=== STALE_HIGH ===" && curl -s "${SB_URL}/rest/v1/rpc/get_tenant_tasks" -H "apikey: ${SB_KEY}" -H "Authorization: Bearer ${SB_KEY}" -H "Content-Type: application/json" -d "{\"p_tenant_id\": \"${TID}\", \"p_statuses\": [\"todo\"]}" && echo "" && echo "=== ANTFARM_RUNS ===" && antfarm workflow runs 2>&1 | head -10 && echo "" && echo "=== TODO_TASKS ===" && curl -s "${SB_URL}/rest/v1/rpc/get_tenant_tasks" -H "apikey: ${SB_KEY}" -H "Authorization: Bearer ${SB_KEY}" -H "Content-Type: application/json" -d "{\"p_tenant_id\": \"${TID}\", \"p_statuses\": [\"todo\"]}"
 ```
 
 ## Step 2: Evaluate and produce JSON
@@ -23,7 +23,6 @@ Using the output from Step 1, build your response:
 - MC_API_STATUS is not "active" → alert (auto-resolve attempted by heartbeat script)
 - DISK_PCT (strip %) is >85 → alert
 - RAM_PCT is >90 → alert
-- GOG_OK is "no" → alert "Google tools (GOG) not working" (auto-resolve attempted by heartbeat script)
 - DAILY_NOTE is "missing" → alert
 - MEDIC section: empty or `checked_at` >2 hours ago → alert "Antfarm medic has not run recently"
 - MEDIC section: `issues_found` > 0 → alert with `summary` value
@@ -33,7 +32,8 @@ Using the output from Step 1, build your response:
 ### Task selection (for `task` field):
 From TODO_TASKS, pick the highest-priority task that Pif can do **autonomously**:
 - YES: research, analysis, drafts, proposals, docs, scripts, configs, infra, memory, cleanup
-- NO: application code (UI, API, features, bugs), external actions (messages, PRs, publishing), spending, architecture changes
+- YES (Lumed project only, project_id fda99072-97a4-4636-869a-89fa83878e8a): application code — UI, pages, components, SEO, analytics integration. Lumed is a greenfield landing page with full autonomy granted.
+- NO: application code for other projects (UI, API, features, bugs), external actions (messages, PRs, publishing), spending, architecture changes
 
 If no suitable task, set `task` to `null`. When in doubt, `null`.
 
