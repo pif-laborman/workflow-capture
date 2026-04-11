@@ -45,8 +45,8 @@ function createWrapper() {
     capturedWorkflowId = selectedWorkflowId;
 
     // Expose setters via a side channel
-    (Wrapper as Record<string, unknown>).__setState = setState;
-    (Wrapper as Record<string, unknown>).__setSelectedWorkflowId = setSelectedWorkflowId;
+    (Wrapper as unknown as Record<string, unknown>).__setState = setState;
+    (Wrapper as unknown as Record<string, unknown>).__setSelectedWorkflowId = setSelectedWorkflowId;
 
     return (
       <AppStateContext.Provider
