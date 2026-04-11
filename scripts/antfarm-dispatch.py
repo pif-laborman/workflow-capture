@@ -96,6 +96,7 @@ if sys.stderr.isatty():
 #                  workflow_id, agent_name, role, run, context}
 PROCESS_REGISTRY: dict = {}
 AGENT_TIMEOUT_SECONDS = 1200  # 20 minutes
+SHUTDOWN_REQUESTED = False  # Set by SIGTERM handler to stop daemon loop
 
 
 # --- Supabase helpers ---
@@ -1424,23 +1425,57 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
     return dispatched
 
 
+# --- Daemon mode ---
+
+def daemon_loop(run_id_filter: str | None = None):
+    """Long-running poll loop: harvest finished agents, spawn new ones, sleep adaptively."""
+    global SHUTDOWN_REQUESTED
+    log.info("Starting daemon mode")
+
+    while not SHUTDOWN_REQUESTED:
+        harvested = harvest()
+        spawned = spawn_pass(run_id_filter)
+        active = len(PROCESS_REGISTRY)
+        log.info(
+            f"POLL CYCLE: active={active} harvested={harvested} spawned={spawned}"
+        )
+
+        interval = 10 if PROCESS_REGISTRY else 60
+        # Sleep in small increments so we can check SHUTDOWN_REQUESTED
+        elapsed = 0
+        while elapsed < interval and not SHUTDOWN_REQUESTED:
+            time.sleep(min(1, interval - elapsed))
+            elapsed += 1
+
+    log.info("Daemon exiting")
+
+
 # --- Entry point ---
 
 def main():
     args = sys.argv[1:]
     run_id = None
     once = False
+    daemon = False
 
     i = 0
     while i < len(args):
         if args[i] == "--once":
             once = True
+        elif args[i] == "--daemon":
+            daemon = True
         elif args[i] == "--run-id" and i + 1 < len(args):
             run_id = args[i + 1]
             i += 1
         i += 1
 
-    if once:
+    if daemon:
+        # Always add StreamHandler in daemon mode for journald visibility
+        _sh_daemon = logging.StreamHandler()
+        _sh_daemon.setFormatter(_fmt)
+        log.addHandler(_sh_daemon)
+        daemon_loop(run_id)
+    elif once:
         # Flag-file gating: skip entirely if no work is expected
         if not run_id and not should_dispatch():
             return
