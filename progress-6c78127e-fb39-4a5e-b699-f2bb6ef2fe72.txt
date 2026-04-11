@@ -5,6 +5,7 @@ Started: 2026-04-11
 
 ## Codebase Patterns
 - Next.js 14 App Router, TypeScript, no Tailwind, no UI library
+- Hooks go in `lib/hooks/` directory, prefixed with `use`
 - Tests: vitest + @testing-library/react, jsdom env, run with `npm test`
 - Test files live in `app/__tests__/`
 - Vitest config: vitest.config.ts with @vitejs/plugin-react and `@/` path alias
@@ -91,4 +92,12 @@ Started: 2026-04-11
 - Wrote 13 tests: content rendering (7 — headline, contract, hint, input placeholder, start button, back button, footer), navigation (5 — back→home, start→recording-start, stores name, trims whitespace, works with empty name), input behavior (1)
 - Files changed: components/NewCaptureScreen.tsx, components/AppShell.tsx, app/globals.css, app/__tests__/new-capture-screen.test.tsx
 - **Learnings:** Next.js ESLint enforces `react/no-unescaped-entities` — use `&apos;` for apostrophes in JSX text content, not raw `'`.
+---
+
+## 2026-04-11 - US-008: Media capture hooks for screen and mic
+- Created lib/hooks/useMediaCapture.ts: hook with startCapture (getDisplayMedia + getUserMedia), stopCapture (stops all tracks), isCapturing, screenStream, micStream, hasTabAudio, error
+- Created lib/hooks/useFrameSampler.ts: hook that draws screen stream to offscreen canvas every 1000ms, exports JPEG base64 at 0.7 quality, calls onFrame callback with TimestampedFrame {data, timestamp_ms}
+- Wrote 13 tests: useMediaCapture (6 — default state, start calls both APIs, hasTabAudio false without audio track, stop stops all tracks, getDisplayMedia error, getUserMedia error), useFrameSampler (7 — null when not capturing, null when no stream, samples frame on start, samples at interval, onFrame callback with timestamp, cleanup on stop, canvas dimensions from track settings)
+- Files changed: lib/hooks/useMediaCapture.ts, lib/hooks/useFrameSampler.ts, app/__tests__/media-capture-hooks.test.ts
+- **Learnings:** jsdom logs "Not implemented: HTMLMediaElement's pause() method" warnings for video elements — harmless in tests. Mock canvas.getContext and canvas.toDataURL with proper type casts (`as typeof canvas.getContext`) to satisfy TypeScript.
 ---
