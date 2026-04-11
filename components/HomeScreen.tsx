@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AppState, SavedWorkflow } from '@/lib/types';
 import { useAppState } from '@/lib/state';
-
-const STORAGE_KEY = 'workflow-capture-sessions';
+import { getWorkflows } from '@/lib/storage';
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -47,15 +46,7 @@ export default function HomeScreen() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as SavedWorkflow[];
-        setWorkflows(parsed);
-      }
-    } catch {
-      // Ignore parse errors
-    }
+    setWorkflows(getWorkflows());
     setLoaded(true);
   }, []);
 

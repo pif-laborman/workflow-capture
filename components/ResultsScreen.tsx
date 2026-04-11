@@ -2,9 +2,8 @@
 
 import { useState, useCallback } from 'react';
 import { useAppState } from '@/lib/state';
-import { AppState, SavedWorkflow, WorkflowDocument, WorkflowStep } from '@/lib/types';
-
-const STORAGE_KEY = 'workflow-capture-sessions';
+import { AppState, WorkflowDocument, WorkflowStep } from '@/lib/types';
+import { saveWorkflow as persistWorkflow, getWorkflow as loadWorkflow } from '@/lib/storage';
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -95,20 +94,12 @@ export default function ResultsScreen() {
   let workflowName = sessionData.workflowName;
 
   if (selectedWorkflowId) {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as SavedWorkflow[];
-        const found = saved.find(w => w.id === selectedWorkflowId);
-        if (found) {
-          workflow = found.workflow;
-          durationMs = found.duration_ms;
-          sessionEvents = found.session_events;
-          workflowName = found.name;
-        }
-      }
-    } catch {
-      // Ignore parse errors
+    const found = loadWorkflow(selectedWorkflowId);
+    if (found) {
+      workflow = found.workflow;
+      durationMs = found.duration_ms;
+      sessionEvents = found.session_events;
+      workflowName = found.name;
     }
   } else {
     workflow = sessionData.workflowResult;
@@ -119,21 +110,17 @@ export default function ResultsScreen() {
   }
 
   // Save to localStorage on first render of a new workflow (not viewing a saved one)
-  const saveWorkflow = useCallback(() => {
+  const doSave = useCallback(() => {
     if (!workflow || selectedWorkflowId) return;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const existing: SavedWorkflow[] = raw ? JSON.parse(raw) : [];
-      const newSaved: SavedWorkflow = {
+      persistWorkflow({
         id: crypto.randomUUID(),
         name: workflowName || workflow.name,
         date: new Date().toISOString(),
         duration_ms: durationMs,
         workflow,
         session_events: sessionEvents,
-      };
-      existing.unshift(newSaved);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+      });
     } catch {
       // Ignore storage errors
     }
@@ -142,7 +129,7 @@ export default function ResultsScreen() {
 
   // Save on mount (only for newly processed workflows)
   useState(() => {
-    saveWorkflow();
+    doSave();
   });
 
   if (!workflow) {
