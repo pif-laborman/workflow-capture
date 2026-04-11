@@ -278,7 +278,7 @@ describe('ResultsScreen', () => {
         return el;
       });
 
-      const mockCreateObjectURL = vi.fn(() => 'blob:test-url');
+      const mockCreateObjectURL = vi.fn<(obj: Blob) => string>(() => 'blob:test-url');
       const mockRevokeObjectURL = vi.fn();
       vi.stubGlobal('URL', { createObjectURL: mockCreateObjectURL, revokeObjectURL: mockRevokeObjectURL });
 
@@ -286,7 +286,7 @@ describe('ResultsScreen', () => {
       fireEvent.click(screen.getByTestId('download-workflow-btn'));
 
       expect(mockCreateObjectURL).toHaveBeenCalledOnce();
-      const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
+      const blob = mockCreateObjectURL.mock.calls[0]![0];
       expect(blob).toBeInstanceOf(Blob);
       expect(blob.type).toBe('application/json');
       expect(clickedAnchors).toHaveLength(1);
@@ -306,7 +306,7 @@ describe('ResultsScreen', () => {
         return el;
       });
 
-      const mockCreateObjectURL = vi.fn(() => 'blob:test-url');
+      const mockCreateObjectURL = vi.fn<(obj: Blob) => string>(() => 'blob:test-url');
       const mockRevokeObjectURL = vi.fn();
       vi.stubGlobal('URL', { createObjectURL: mockCreateObjectURL, revokeObjectURL: mockRevokeObjectURL });
 
@@ -314,7 +314,7 @@ describe('ResultsScreen', () => {
       fireEvent.click(screen.getByTestId('download-session-btn'));
 
       expect(mockCreateObjectURL).toHaveBeenCalledOnce();
-      const blob = mockCreateObjectURL.mock.calls[0][0] as Blob;
+      const blob = mockCreateObjectURL.mock.calls[0]![0];
       expect(blob).toBeInstanceOf(Blob);
       expect(blob.type).toBe('application/json');
       expect(clickedAnchors).toHaveLength(1);
