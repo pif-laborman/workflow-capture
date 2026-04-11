@@ -11,6 +11,7 @@ import HomeScreen from '@/components/HomeScreen';
 import NewCaptureScreen from '@/components/NewCaptureScreen';
 import RecordingController from '@/components/RecordingController';
 import ProcessingScreen from '@/components/ProcessingScreen';
+import ResultsScreen from '@/components/ResultsScreen';
 
 function ScreenPlaceholder({ state }: { state: AppState }) {
   return (
@@ -36,6 +37,8 @@ export default function AppShell() {
         return <RecordingController />;
       case AppState.Processing:
         return <ProcessingScreen />;
+      case AppState.Results:
+        return <ResultsScreen />;
       default:
         return <ScreenPlaceholder state={currentState} />;
     }

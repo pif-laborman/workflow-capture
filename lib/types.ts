@@ -45,6 +45,7 @@ export interface WorkflowStep {
   action: string;
   notes: string;
   screenshot_timestamp_ms: number | null;
+  confidence?: 'high' | 'medium' | 'low';
 }
 
 export interface WorkflowDocument {
