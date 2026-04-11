@@ -1,0 +1,25 @@
+# Progress Log
+Run: f35e1a25-ecd1-4960-b177-c1d2ec66a13f
+Task: Parallel Antfarm Dispatch - convert dispatcher from sequential to parallel execution
+Started: 2026-04-11
+
+## Codebase Patterns
+- antfarm-dispatch.py has hyphens in filename; import with importlib.util.spec_from_file_location
+- ROLE_CONFIG dict defines per-role claude CLI args, user, and timeout; always deep-copy cmd list before mutating
+- Agent execution uses `su - ralph -c '...'` pattern for ralph user roles
+- Prompt is written to a NamedTemporaryFile with delete=False, chmod 0o644
+- Tests use pytest with unittest.TestCase style; mock subprocess.Popen for agent tests
+- Python 3.12.3; yaml and requests are available as imports
+- Supabase creds resolved from env or pif-creds CLI fallback at module load time
+
+---
+
+## 2026-04-11 - US-001: Non-blocking execute_agent and process registry
+- Added `PROCESS_REGISTRY: dict = {}` at module level after logging section
+- Added `execute_agent_async()` that returns `{popen, stdout_path, prompt_file}` or None
+- Stdout captured to temp file (not pipe) to avoid deadlock
+- Prompt file preserved for caller to clean up after harvest
+- Existing `execute_agent()` left unchanged
+- Files changed: scripts/antfarm-dispatch.py, scripts/test_execute_agent_async.py, .gitignore
+- **Learnings:** Module import requires patching env vars for SUPABASE_URL/KEY before exec_module
+---
