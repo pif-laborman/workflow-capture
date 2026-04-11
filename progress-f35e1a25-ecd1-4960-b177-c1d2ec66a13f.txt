@@ -35,3 +35,14 @@ Started: 2026-04-11
 - Files changed: scripts/antfarm-dispatch.py, scripts/test_harvest.py
 - **Learnings:** Use `list(PROCESS_REGISTRY.items())` to iterate a snapshot when mutating during iteration; mock module functions with `patch.object(_mod, "fn_name")` pattern
 ---
+
+## 2026-04-11 - US-003: Concurrency cap and spawn pass
+- Added `PER_RUN_CAP = 1` constant for fair sharing across runs
+- Added `get_max_concurrent()` — queries Supabase `policies` table for `max_concurrent_antfarm_agents`, defaults to 3
+- Added `spawn_pass(run_id_filter=None)` — scans running runs, enforces global + per-run caps, peeks/claims/builds prompt/spawns agents, adds to PROCESS_REGISTRY
+- spawn_pass calls prune_stale_worktrees() at start and close_stale_runs() at end
+- Handles spawn failures (execute_agent_async returns None) by calling antfarm_fail
+- Preserves worktree safety check and claim mismatch detection from dispatch_once
+- Files changed: scripts/antfarm-dispatch.py, scripts/test_spawn_pass.py
+- **Learnings:** spawn_pass mirrors dispatch_once's per-run loop structure but with capacity checks instead of blocking execution; re-check caps inside inner agent loop since spawning changes registry size
+---
