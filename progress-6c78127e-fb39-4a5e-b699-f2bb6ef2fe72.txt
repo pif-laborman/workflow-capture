@@ -141,3 +141,15 @@ Started: 2026-04-11
 - Files changed: components/RecordingScreen.tsx, components/AppShell.tsx, app/globals.css, app/__tests__/recording-screen.test.tsx
 - **Learnings:** jsdom doesn't implement `scrollIntoView` — guard with `typeof el.scrollIntoView === 'function'` check to avoid test failures. RecordingScreen uses props interface rather than context for dynamic data (transcript, interjections, counts) — keeps the component testable and decoupled from hooks.
 ---
+
+## 2026-04-11 - US-013: Recording integration: wire hooks to UI
+- Created components/RecordingController.tsx: orchestrator component that wires useMediaCapture, useFrameSampler, useSpeechRecognition, useTTS, useEventLog, and useObserveLoop together, passes all data to RecordingScreen as props
+- RecordingStart state auto-triggers startCapture + speech recognition start, transitions to RecordingActive on success
+- Frame sampler onFrame callback feeds eventLog.addFrame; observe loop interjections extracted from event log for UI
+- TTS onSpeakStart/onSpeakEnd wired to speechRecognition.pause/resume to prevent feedback loop
+- Stop handler cleans up all hooks (stopCapture, stop recognition, cancel TTS) and copies events to sessionData
+- Updated AppShell.tsx: renders RecordingController for both RecordingStart and RecordingActive states (replacing placeholder props)
+- Wrote 14 tests: initialization (3 — startCapture+recognition called, transitions to RecordingActive, fallback to NewCapture on error), prop passing (6 — hasTabAudio, transcript chunks, interim text, observe count, frame count, interjection count), stop cleanup (2 — stops all hooks, copies events to session data), TTS-mic integration (2 — onSpeakStart pauses, onSpeakEnd resumes), rendering (1)
+- Files changed: components/RecordingController.tsx, components/AppShell.tsx, app/__tests__/recording-controller.test.tsx
+- **Learnings:** Controller/presenter pattern works well for hook integration: RecordingController (stateful orchestrator) + RecordingScreen (pure props UI) — each can be tested independently with mocks. Use useRef for latestFrame to avoid stale closures in observe loop callbacks.
+---
