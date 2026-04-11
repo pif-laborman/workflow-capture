@@ -76,3 +76,13 @@ Started: 2026-04-11
 - Files changed: scripts/antfarm-dispatch.py, scripts/test_recover_orphaned_steps.py, scripts/test_daemon_loop.py, scripts/test_sigterm_handler.py
 - **Learnings:** When adding a new function call to daemon_loop, all existing tests that call daemon_loop need the new function mocked — add `@patch.object(_mod, "recover_orphaned_steps", return_value=0)` as outermost decorator and corresponding param at end of test method signature
 ---
+
+## 2026-04-11 - US-007: Schedule disable on daemon startup and --once update
+- Added `set_schedule_enabled(False)` call in `daemon_loop()` after `recover_orphaned_steps()` and before poll loop, with log message
+- Rewrote `--once` code path to use spawn+harvest: calls `spawn_pass()`, loops `harvest()` + `sleep(5)` while `PROCESS_REGISTRY` non-empty, exits after all harvested
+- Rewrote default continuous mode to use `harvest()` + `spawn_pass()` instead of `dispatch_once()`, exits when no active agents and no running runs
+- Updated all daemon_loop tests in test_daemon_loop.py and test_sigterm_handler.py to mock `set_schedule_enabled`
+- Removed old `test_once_flag_still_works` test that called `dispatch_once` directly
+- Files changed: scripts/antfarm-dispatch.py, scripts/test_daemon_loop.py, scripts/test_sigterm_handler.py, scripts/test_schedule_disable_once.py (new)
+- **Learnings:** Same pattern as US-006 — adding a new call to daemon_loop requires updating all existing daemon_loop test decorators. Added `@patch.object(_mod, "set_schedule_enabled")` alongside `recover_orphaned_steps` in every daemon_loop test
+---
