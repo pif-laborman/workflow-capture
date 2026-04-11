@@ -192,3 +192,15 @@ Started: 2026-04-11
 - Files changed: lib/storage.ts, components/HomeScreen.tsx, components/ResultsScreen.tsx, app/__tests__/storage.test.ts, app/__tests__/storage-integration.test.tsx
 - **Learnings:** Extracting localStorage logic into a pure module makes both unit testing and component refactoring clean — components import functions instead of duplicating key strings and parse logic.
 ---
+
+## 2026-04-12 - US-017: Graceful degradation and build verification
+- Added browser compatibility check in AppShell: detects Chrome/Edge via userAgent, shows unsupported browser message for other browsers
+- Exported isSupportedBrowser() for testability
+- Removed unused page.module.css (default create-next-app scaffold)
+- Verified existing graceful degradation: /api/observe returns {speak: false} when key missing, /api/finalize returns 500 with clear error, ProcessingScreen shows specific API key error
+- Verified no TypeScript errors (npx tsc --noEmit), build succeeds (npm run build), all 253 tests pass
+- Verified API key only accessed in server-side route files, never exposed in responses
+- Wrote 12 new tests: 5 browser check tests (Chrome, Edge, Firefox, Safari, unsupported message rendering), 7 graceful degradation tests (observe/finalize key missing, API key not in observe/finalize/error responses)
+- Files changed: components/AppShell.tsx, app/globals.css, app/__tests__/browser-check.test.tsx, app/__tests__/graceful-degradation.test.ts, app/__tests__/state-appshell.test.tsx, deleted app/page.module.css
+- **Learnings:** jsdom's default userAgent doesn't contain "Chrome" — tests for components with browser detection need to mock navigator.userAgent. Use Object.defineProperty with configurable: true and restore in afterEach.
+---
