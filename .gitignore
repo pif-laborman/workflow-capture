@@ -18,3 +18,13 @@ node_modules/
 .ssh/
 .pif-env
 snap/
+.antfarm/
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.secret
+.DS_Store
+dist/
+coverage/

@@ -90,6 +90,12 @@ if sys.stderr.isatty():
     _sh.setFormatter(_fmt)
     log.addHandler(_sh)
 
+# --- Process registry (parallel dispatch) ---
+
+# Maps step_id -> {popen, run_id, agent_id, start_time, stdout_path, prompt_file,
+#                  workflow_id, agent_name, role, run, context}
+PROCESS_REGISTRY: dict = {}
+
 
 # --- Supabase helpers ---
 
@@ -406,6 +412,79 @@ def execute_agent(agent_name: str, role: str, prompt: str, repo: str,
             os.unlink(prompt_file)
         except OSError:
             pass
+
+
+def execute_agent_async(agent_name: str, role: str, prompt: str, repo: str,
+                        model: str | None = None) -> dict | None:
+    """Invoke claude asynchronously — returns immediately with Popen handle.
+
+    Returns dict with 'popen' (Popen), 'stdout_path' (str), 'prompt_file' (str)
+    on success, or None if the repo path doesn't exist.
+
+    The caller is responsible for:
+      - Polling popen.poll() to detect completion
+      - Reading stdout_path for captured output
+      - Deleting prompt_file and stdout_path after harvest
+    """
+    if repo and not Path(repo).is_dir():
+        log.error(f"execute_agent_async: repo path does not exist: {repo}")
+        return None
+
+    config = ROLE_CONFIG.get(role, ROLE_CONFIG["analysis"])
+    # Deep copy cmd list so we don't mutate ROLE_CONFIG
+    config = {**config, "cmd": list(config["cmd"])}
+    if model:
+        try:
+            idx = config["cmd"].index("--model")
+            config["cmd"][idx + 1] = model
+        except (ValueError, IndexError):
+            config["cmd"].extend(["--model", model])
+
+    # Write prompt to temp file (readable by ralph)
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, prefix="antfarm-"
+    ) as f:
+        f.write(prompt)
+        prompt_file = f.name
+    os.chmod(prompt_file, 0o644)
+
+    # Open a temp file for stdout capture (not a pipe, to avoid deadlock)
+    stdout_path = tempfile.mktemp(suffix=".log", prefix="antfarm-stdout-")
+
+    try:
+        stdout_fh = open(stdout_path, "w")
+
+        if config["user"] == "ralph":
+            cmd_str = " ".join(config["cmd"])
+            shell_cmd = (
+                f'unset CLAUDECODE; cd "{repo}" && {cmd_str} < "{prompt_file}"'
+            )
+            popen = subprocess.Popen(
+                ["su", "-", "ralph", "-c", shell_cmd],
+                stdout=stdout_fh, stderr=subprocess.STDOUT, text=True,
+            )
+        else:
+            cmd_str = " ".join(config["cmd"])
+            shell_cmd = f'cd "{repo}" && {cmd_str} < "{prompt_file}"'
+            popen = subprocess.Popen(
+                ["bash", "-c", shell_cmd],
+                stdout=stdout_fh, stderr=subprocess.STDOUT, text=True,
+            )
+
+        return {"popen": popen, "stdout_path": stdout_path, "prompt_file": prompt_file}
+    except Exception as e:
+        log.error(f"execute_agent_async failed to spawn: {e}")
+        # Clean up on failure
+        try:
+            stdout_fh.close()
+        except Exception:
+            pass
+        for p in [prompt_file, stdout_path]:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        return None
 
 
 # --- Cross-step retry ---
