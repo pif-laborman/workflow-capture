@@ -437,3 +437,223 @@ a {
   color: var(--text-tertiary);
   margin-top: var(--space-4);
 }
+
+/* ==========================================================================
+   Recording Screen
+   ========================================================================== */
+
+.recording-screen {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Top bar */
+
+.recording-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-6);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-page);
+  flex-shrink: 0;
+}
+
+.recording-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-error);
+  animation: pulse-rec 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-rec {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.rec-timer {
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.recording-metrics {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.metric {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.metric-label {
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* Warning banner */
+
+.recording-warning {
+  padding: var(--space-2) var(--space-6);
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Two-column layout */
+
+.recording-columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  min-height: 0;
+}
+
+.recording-divider {
+  background: var(--border);
+}
+
+.recording-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.panel-heading {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pill-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  border-radius: var(--radius-full);
+  line-height: 1.4;
+}
+
+.pill-live {
+  background: rgba(3, 169, 126, 0.1);
+  color: var(--color-success);
+}
+
+.pill-reason {
+  background: var(--bg-warm);
+  color: var(--text-secondary);
+}
+
+.panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6);
+}
+
+.panel-empty-hint {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  font-style: italic;
+  padding: var(--space-6) 0;
+  text-align: center;
+}
+
+/* Transcript blocks */
+
+.transcript-block {
+  margin-bottom: var(--space-3);
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.transcript-timestamp {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.transcript-text {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.transcript-final .transcript-text {
+  color: var(--text-primary);
+}
+
+.transcript-interim .transcript-text {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* Interjection cards */
+
+.interjection-card {
+  background: var(--bg-warm);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.interjection-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.interjection-timestamp {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.interjection-text {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: var(--text-sm);
+  font-style: italic;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
