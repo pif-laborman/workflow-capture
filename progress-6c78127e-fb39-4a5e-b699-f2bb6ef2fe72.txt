@@ -167,3 +167,16 @@ Started: 2026-04-11
 - Files changed: components/ProcessingScreen.tsx, components/AppShell.tsx, app/globals.css, app/__tests__/processing-screen.test.tsx
 - **Learnings:** ReadableStream + TextDecoder pattern for consuming streaming responses client-side. Use `new Promise(() => {})` (never-resolving) to test initial render state without triggering async completion. useRef flag (`hasStarted`) prevents double-fire in React StrictMode.
 ---
+
+## 2026-04-11 - US-015: Results screen with step cards and downloads
+- Created components/ResultsScreen.tsx: header with green check + workflow title, stats row (steps/questions/duration), download buttons (workflow.json + session-raw.json via Blob URLs), collapsible step cards with confidence badges (high=green/medium=yellow/low=red), open questions section on warm background, footer with navigation buttons
+- Added optional `confidence` field to WorkflowStep type (backward-compatible, derives from notes if absent)
+- Step cards expand on click to show intent (description), screen_context (ui_element), open_questions (notes) with mono labels
+- Downloads create Blob URLs and trigger via programmatic anchor click
+- Saves new workflows to localStorage on first render (skips when viewing saved workflow via selectedWorkflowId)
+- Updated AppShell.tsx: renders ResultsScreen for Results state
+- Added results screen CSS to globals.css: header, stats row, download buttons, step cards, confidence pills, step details, open questions section, footer
+- Wrote 23 tests: header rendering (2), stats row (3), step cards (8 — count, zero-padding, action text, high/medium/low confidence, explicit confidence, expand/collapse), open questions (3 — rendering, explanation text, empty hidden), download buttons (4 — render, workflow blob, session blob), footer navigation (2), no-data fallback (1)
+- Files changed: components/ResultsScreen.tsx, components/AppShell.tsx, lib/types.ts, app/globals.css, app/__tests__/results-screen.test.tsx
+- **Learnings:** Don't mock document.body.appendChild in download tests — it breaks React's render. Instead mock createElement to intercept anchor click. Use origCreateElement = document.createElement.bind(document) to keep real DOM working while intercepting specific tags.
+---
