@@ -1,0 +1,94 @@
+# Progress Log
+Run: 6c78127e-fb39-4a5e-b699-f2bb6ef2fe72
+Task: Build the Workflow Capture app
+Started: 2026-04-11
+
+## Codebase Patterns
+- Next.js 14 App Router, TypeScript, no Tailwind, no UI library
+- Tests: vitest + @testing-library/react, jsdom env, run with `npm test`
+- Test files live in `app/__tests__/`
+- Vitest config: vitest.config.ts with @vitejs/plugin-react and `@/` path alias
+- CSS: plain CSS in app/globals.css with Rekon design tokens as CSS custom properties
+- Fonts: Google Fonts loaded via <link> in layout.tsx (DM Sans, Inter, Fragment Mono)
+- Shared button classes: .btn-primary, .btn-outline, .btn-stop in globals.css
+- Shared card class: .card in globals.css
+- Shared types in `lib/types.ts`, constants in `lib/constants.ts`
+- System prompts in `lib/prompts/observe.ts` and `lib/prompts/finalize.ts`
+- Cooldown state in `lib/cooldown.ts` (separate module so route files stay clean for Next.js)
+- Keyframe selection in `lib/keyframes.ts` (separate module, same pattern)
+- Next.js route files cannot export non-route functions (GET, POST, etc.) — use separate modules for testable state
+- Streaming API routes: use `client.messages.stream()` with `.on('text', cb)` + `await .finalMessage()`, return `new Response(readableStream)`
+- App state machine: lib/state.ts (AppStateContext + useAppState hook), components/AppShell.tsx (top-level client component)
+- Components go in `components/` dir at project root
+- Testing-library tests need explicit `cleanup()` in `afterEach` to avoid DOM accumulation across tests
+- AppStateContext includes selectedWorkflowId/setSelectedWorkflowId for navigating to saved workflow results
+- localStorage key for saved workflows: 'workflow-capture-sessions' (SavedWorkflow[])
+
+---
+
+## 2026-04-11 - US-001: Test infrastructure and design system CSS
+- Installed vitest, @testing-library/react, @testing-library/jest-dom, jsdom, @vitejs/plugin-react
+- Configured vitest.config.ts with jsdom environment and @ path alias
+- Replaced globals.css with full Rekon design system tokens
+- Added shared button classes (.btn-primary, .btn-outline, .btn-stop) and .card class
+- Updated layout.tsx: Google Fonts links, metadata title 'Workflow Capture', removed Geist local fonts
+- Wrote 18 tests covering tokens, button classes, card class, layout metadata, font loading
+- Files changed: globals.css, layout.tsx, package.json, vitest.config.ts, vitest.setup.ts, app/__tests__/design-system.test.tsx
+- **Learnings:** Next.js 14 warns about custom fonts in layout.tsx (no-page-custom-font) but it's non-blocking for SPA. The scaffold uses Geist local fonts by default which we replaced with Google Fonts.
+---
+
+## 2026-04-11 - US-002: TypeScript types, constants, and system prompts
+- Created lib/types.ts: AppState enum (6 states), EventType enum, SessionEvent, TranscriptChunk, ObserveRequest, ObserveResponse, WorkflowStep, WorkflowDocument, SavedWorkflow interfaces
+- Created lib/constants.ts: OBSERVE_INTERVAL_MS (2000), COOLDOWN_MS (20000), FRAME_INTERVAL_MS (1000), JPEG_QUALITY (0.7), MAX_KEYFRAMES (60)
+- Created lib/prompts/observe.ts: system prompt with 5 intervention triggers (missing why, contradiction, ambiguous generalization, apparent error, implicit step), forces JSON output
+- Created lib/prompts/finalize.ts: system prompt for producing WorkflowDocument JSON from event log, with deduplication and ambiguity resolution instructions
+- Wrote 22 tests covering enum values, interface construction, constant values, prompt content verification
+- Files changed: lib/types.ts, lib/constants.ts, lib/prompts/observe.ts, lib/prompts/finalize.ts, app/__tests__/types-constants-prompts.test.ts
+- **Learnings:** Pure TS module tests (no React/DOM) can use vitest without jsdom environment. The `@/` path alias works in test files via vitest.config.ts resolve.alias.
+---
+
+## 2026-04-11 - US-003: API route /api/observe with cooldown
+- Created app/api/observe/route.ts: POST handler with graceful API key fallback, server-side + client-side cooldown enforcement, Claude Sonnet call with image+text, JSON response parsing
+- Created lib/cooldown.ts: module-level cooldown state (get/set/reset) extracted to separate module because Next.js route files cannot export non-route functions
+- Wrote 12 tests: missing API key (2), cooldown enforcement (4), successful Claude call (3), error handling (3) — all mocking Anthropic SDK with class-based vi.mock
+- Files changed: app/api/observe/route.ts, lib/cooldown.ts, app/__tests__/observe-api.test.ts
+- **Learnings:** Next.js App Router route files reject extra exports at build time ("_resetCooldown is not a valid Route export field"). Any testable state must live in a separate module. Mock Anthropic SDK with a class (not arrow fn) since the route uses `new Anthropic()`.
+---
+
+## 2026-04-11 - US-004: API route /api/finalize with streaming
+- Created app/api/finalize/route.ts: POST handler with API key check (500 error), request validation, keyframe selection, Claude Sonnet streaming call, ReadableStream response
+- Created lib/keyframes.ts: selectKeyframes() — evenly samples frames when count > MAX_KEYFRAMES (60), preserves all non-frame events, maintains chronological order
+- Wrote 14 tests: missing API key (2), request validation (4), streaming response (3), keyframe selection (5)
+- Files changed: app/api/finalize/route.ts, lib/keyframes.ts, app/__tests__/finalize-api.test.ts
+- **Learnings:** For streaming mock tests, mock `stream.on('text', cb)` to invoke the callback with text chunks, and `stream.finalMessage()` to resolve. The stream object from `client.messages.stream()` is event-based — use `.on('text')` for incremental delivery.
+---
+
+## 2026-04-11 - US-005: App state machine and layout shell
+- Created lib/state.ts: AppStateContext with currentState, setState, sessionData, setSessionData; useAppState hook; initialSessionData defaults
+- Created components/AppShell.tsx: client component with useState for state + session data, wraps children in AppStateContext.Provider, renders ScreenPlaceholder based on currentState
+- Replaced app/page.tsx scaffold with 'use client' page rendering AppShell
+- Wrote 8 tests: initial state default, session data defaults, setState transitions, all 6 enum states reachable, full flow cycle, AppShell container rendering, home placeholder, context provision
+- Files changed: lib/state.ts, components/AppShell.tsx, app/page.tsx, app/__tests__/state-appshell.test.tsx
+- **Learnings:** @testing-library/react needs explicit cleanup() in afterEach when running multiple render() calls in the same test file under vitest/jsdom — without it, DOM accumulates across tests causing "multiple elements found" errors.
+---
+
+## 2026-04-11 - US-006: Home screen with workflow library
+- Created components/HomeScreen.tsx: empty state ("No workflows yet" + CTA), populated state (header, workflow cards, "New capture" button), localStorage reading, footer with persistence warning
+- Added selectedWorkflowId + setSelectedWorkflowId to AppStateContext (lib/state.ts)
+- Updated AppShell.tsx: renders HomeScreen for Home state instead of placeholder, added selectedWorkflowId state
+- Added home screen CSS to globals.css: home layout, brand, header, empty state, workflow cards, confidence dots, footer
+- Wrote 15 tests: empty state rendering (4), populated state rendering (8), edge cases (2), duration formatting (1)
+- Updated 2 existing AppShell tests to expect HomeScreen instead of placeholder
+- Files changed: components/HomeScreen.tsx, lib/state.ts, components/AppShell.tsx, app/globals.css, app/__tests__/home-screen.test.tsx, app/__tests__/state-appshell.test.tsx
+- **Learnings:** SavedWorkflow has both a top-level `name` and `workflow.name` — cards should display `workflow.name` (the AI-generated title). When overriding in test fixtures, remember to override nested workflow.name too.
+- **Fix (retry):** TypeScript TS2352 — casting a React FC directly to `Record<string, unknown>` is not allowed. Must cast through `unknown` first: `(Fn as unknown as Record<string, unknown>).prop = value`.
+---
+
+## 2026-04-11 - US-007: New capture pre-recording screen
+- Created components/NewCaptureScreen.tsx: centered layout with headline, contract text, permission hint, optional workflow name input (pill-shaped), start recording button, back button, footer note
+- Updated components/AppShell.tsx: renders NewCaptureScreen for NewCapture state
+- Added new-capture CSS to globals.css: centered layout, 48px DM Sans Light headline, pill input, footer in Fragment Mono
+- Wrote 13 tests: content rendering (7 — headline, contract, hint, input placeholder, start button, back button, footer), navigation (5 — back→home, start→recording-start, stores name, trims whitespace, works with empty name), input behavior (1)
+- Files changed: components/NewCaptureScreen.tsx, components/AppShell.tsx, app/globals.css, app/__tests__/new-capture-screen.test.tsx
+- **Learnings:** Next.js ESLint enforces `react/no-unescaped-entities` — use `&apos;` for apostrophes in JSX text content, not raw `'`.
+---
