@@ -9,7 +9,7 @@ import {
 } from '@/lib/state';
 import HomeScreen from '@/components/HomeScreen';
 import NewCaptureScreen from '@/components/NewCaptureScreen';
-import RecordingScreen from '@/components/RecordingScreen';
+import RecordingController from '@/components/RecordingController';
 
 function ScreenPlaceholder({ state }: { state: AppState }) {
   return (
@@ -30,18 +30,9 @@ export default function AppShell() {
         return <HomeScreen />;
       case AppState.NewCapture:
         return <NewCaptureScreen />;
+      case AppState.RecordingStart:
       case AppState.RecordingActive:
-        return (
-          <RecordingScreen
-            hasTabAudio={true}
-            transcriptChunks={[]}
-            interimText=""
-            interjections={[]}
-            framesCaptured={0}
-            observeCallCount={0}
-            onStop={() => {}}
-          />
-        );
+        return <RecordingController />;
       default:
         return <ScreenPlaceholder state={currentState} />;
     }
