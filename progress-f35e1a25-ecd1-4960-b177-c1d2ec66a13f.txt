@@ -86,3 +86,13 @@ Started: 2026-04-11
 - Files changed: scripts/antfarm-dispatch.py, scripts/test_daemon_loop.py, scripts/test_sigterm_handler.py, scripts/test_schedule_disable_once.py (new)
 - **Learnings:** Same pattern as US-006 — adding a new call to daemon_loop requires updating all existing daemon_loop test decorators. Added `@patch.object(_mod, "set_schedule_enabled")` alongside `recover_orphaned_steps` in every daemon_loop test
 ---
+
+## 2026-04-11 - US-008: Systemd service unit file
+- Created `systemd/antfarm-dispatch.service` in repo (deploy target: /etc/systemd/system/)
+- Unit: Type=simple, User=root, WorkingDirectory=/root
+- ExecStart uses `/bin/bash -c 'source .pif-env && exec python3 ... --daemon'` — exec ensures SIGTERM reaches Python
+- Restart=on-failure, RestartSec=10, KillSignal=SIGTERM, TimeoutStopSec=180 (120s grace + 60s buffer)
+- WantedBy=multi-user.target for standard boot integration
+- Files changed: systemd/antfarm-dispatch.service (new), scripts/test_systemd_service.py (new)
+- **Learnings:** configparser can parse systemd unit files since they use INI-style `Key=Value` syntax; useful for validation tests
+---
