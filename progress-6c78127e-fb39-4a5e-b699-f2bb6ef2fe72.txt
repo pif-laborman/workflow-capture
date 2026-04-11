@@ -153,3 +153,17 @@ Started: 2026-04-11
 - Files changed: components/RecordingController.tsx, components/AppShell.tsx, app/__tests__/recording-controller.test.tsx
 - **Learnings:** Controller/presenter pattern works well for hook integration: RecordingController (stateful orchestrator) + RecordingScreen (pure props UI) — each can be tested independently with mocks. Use useRef for latestFrame to avoid stale closures in observe loop callbacks.
 ---
+
+## 2026-04-11 - US-014: Processing screen with streaming finalize
+- Created components/ProcessingScreen.tsx: centered layout with CSS spinner, "Building your workflow" headline (DM Sans Light 32px), input summary (frame count, duration, interjection count), streaming progress steps
+- On mount: POSTs session events to /api/finalize, reads streaming response via ReadableStream reader, accumulates text, parses WorkflowDocument JSON
+- Progress heuristics: marks steps done based on streaming progress (step 1 on first data, step 2 at 100+ chars, step 3 on complete)
+- Handles markdown code block wrapping (```json...```), streamed error objects, HTTP error responses
+- API key missing error: specific headline "API key not configured", no retry button, only "Go home"
+- Generic errors: "Something went wrong" headline with both "Try again" and "Go home" buttons
+- Added processing screen CSS to globals.css: centered layout, spin keyframe animation, progress steps with done/pending styling, error state
+- Updated AppShell.tsx: renders ProcessingScreen for Processing state
+- Wrote 15 tests: rendering (4 — spinner+headline, input summary, singular interjection, progress steps), streaming (4 — POST body, parse+transition, markdown code blocks, default workflow name), errors (7 — API key error, generic error, invalid JSON, missing fields, home button, network error, streamed error object)
+- Files changed: components/ProcessingScreen.tsx, components/AppShell.tsx, app/globals.css, app/__tests__/processing-screen.test.tsx
+- **Learnings:** ReadableStream + TextDecoder pattern for consuming streaming responses client-side. Use `new Promise(() => {})` (never-resolving) to test initial render state without triggering async completion. useRef flag (`hasStarted`) prevents double-fire in React StrictMode.
+---
