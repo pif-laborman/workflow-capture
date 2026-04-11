@@ -51,10 +51,11 @@ class TestDaemonLoop(unittest.TestCase):
         _mod.SHUTDOWN_REQUESTED = False
 
     @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_calls_harvest_then_spawn(self, mock_harvest, mock_spawn, mock_time, mock_recover):
+    def test_calls_harvest_then_spawn(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
         """Verify harvest is called before spawn_pass each cycle."""
         call_order = []
         mock_harvest.side_effect = lambda: (call_order.append("harvest"), 0)[1]
@@ -70,10 +71,11 @@ class TestDaemonLoop(unittest.TestCase):
         self.assertEqual(call_order, ["harvest", "spawn"])
 
     @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_passes_run_id_filter_to_spawn(self, mock_harvest, mock_spawn, mock_time, mock_recover):
+    def test_passes_run_id_filter_to_spawn(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
         """spawn_pass receives the run_id_filter argument."""
         mock_spawn.side_effect = lambda run_id_filter=None: (
             setattr(_mod, "SHUTDOWN_REQUESTED", True),
@@ -86,10 +88,11 @@ class TestDaemonLoop(unittest.TestCase):
         mock_spawn.assert_called_once_with("test-run-123")
 
     @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_adaptive_interval_idle(self, mock_harvest, mock_spawn, mock_time, mock_recover):
+    def test_adaptive_interval_idle(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
         """When PROCESS_REGISTRY is empty, sleep intervals should total ~60s."""
         sleep_calls = []
 
@@ -107,10 +110,11 @@ class TestDaemonLoop(unittest.TestCase):
         self.assertEqual(total_sleep, 60)
 
     @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=1)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_adaptive_interval_active(self, mock_harvest, mock_spawn, mock_time, mock_recover):
+    def test_adaptive_interval_active(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
         """When PROCESS_REGISTRY is non-empty, sleep intervals should total ~10s."""
         def spawn_with_registry(*_args, **_kwargs):
             PROCESS_REGISTRY["step-1"] = {"popen": MagicMock(), "run_id": "r1"}
@@ -135,10 +139,11 @@ class TestDaemonLoop(unittest.TestCase):
         self.assertEqual(total_sleep, 10)
 
     @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_stops_on_shutdown_requested(self, mock_harvest, mock_spawn, mock_time, mock_recover):
+    def test_stops_on_shutdown_requested(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
         """Loop exits when SHUTDOWN_REQUESTED is set."""
         call_count = [0]
 
@@ -157,10 +162,11 @@ class TestDaemonLoop(unittest.TestCase):
         self.assertEqual(call_count[0], 2)
 
     @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_logs_poll_cycle(self, mock_harvest, mock_spawn, mock_time, mock_recover):
+    def test_logs_poll_cycle(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
         """Verify poll cycle logs active/harvested/spawned counts."""
         mock_spawn.side_effect = lambda run_id_filter=None: (
             setattr(_mod, "SHUTDOWN_REQUESTED", True),
@@ -181,6 +187,45 @@ class TestDaemonLoop(unittest.TestCase):
             self.assertIn("active=0", msg)
             self.assertIn("harvested=0", msg)
             self.assertIn("spawned=0", msg)
+
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
+    @patch.object(_mod, "time")
+    @patch.object(_mod, "spawn_pass", return_value=0)
+    @patch.object(_mod, "harvest", return_value=0)
+    def test_disables_schedule_on_startup(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
+        """daemon_loop calls set_schedule_enabled(False) on startup."""
+        mock_spawn.side_effect = lambda run_id_filter=None: (
+            setattr(_mod, "SHUTDOWN_REQUESTED", True),
+            0,
+        )[1]
+        mock_time.sleep = MagicMock()
+
+        daemon_loop()
+
+        mock_sched.assert_called_once_with(False)
+
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
+    @patch.object(_mod, "set_schedule_enabled")
+    @patch.object(_mod, "time")
+    @patch.object(_mod, "spawn_pass", return_value=0)
+    @patch.object(_mod, "harvest", return_value=0)
+    def test_schedule_disabled_before_poll_loop(self, mock_harvest, mock_spawn, mock_time, mock_sched, mock_recover):
+        """set_schedule_enabled(False) is called before any harvest/spawn."""
+        call_order = []
+        mock_sched.side_effect = lambda enabled: call_order.append("schedule_disabled")
+        mock_harvest.side_effect = lambda: (call_order.append("harvest"), 0)[1]
+        mock_spawn.side_effect = lambda run_id_filter=None: (
+            call_order.append("spawn"),
+            setattr(_mod, "SHUTDOWN_REQUESTED", True),
+            0,
+        )[2]
+        mock_time.sleep = MagicMock()
+
+        daemon_loop()
+
+        self.assertEqual(call_order[0], "schedule_disabled")
+        self.assertIn("harvest", call_order[1:])
 
 
 class TestMainDaemonFlag(unittest.TestCase):
@@ -203,13 +248,6 @@ class TestMainDaemonFlag(unittest.TestCase):
         with patch.object(_mod.sys, "argv", ["dispatch", "--daemon", "--run-id", "abc"]):
             _mod.main()
         mock_daemon.assert_called_once_with("abc")
-
-    @patch.object(_mod, "dispatch_once")
-    @patch.object(_mod, "should_dispatch", return_value=True)
-    def test_once_flag_still_works(self, mock_should, mock_dispatch):
-        with patch.object(_mod.sys, "argv", ["dispatch", "--once"]):
-            _mod.main()
-        mock_dispatch.assert_called_once_with(None)
 
     @patch.object(_mod, "daemon_loop")
     def test_daemon_adds_stream_handler(self, mock_daemon):

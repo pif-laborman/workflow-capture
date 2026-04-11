@@ -1477,6 +1477,9 @@ def daemon_loop(run_id_filter: str | None = None):
     if recovered:
         log.info(f"Recovered {recovered} orphaned step(s) before entering poll loop")
 
+    set_schedule_enabled(False)
+    log.info("Disabled antfarm-dispatch schedule (daemon mode active)")
+
     signal.signal(signal.SIGTERM, handle_sigterm)
 
     while not SHUTDOWN_REQUESTED:
@@ -1546,19 +1549,31 @@ def main():
         # Flag-file gating: skip entirely if no work is expected
         if not run_id and not should_dispatch():
             return
-        dispatch_once(run_id)
+        # Spawn all eligible agents, then wait for all to finish
+        spawned = spawn_pass(run_id)
+        log.info(f"--once: spawned {spawned} agent(s), waiting for completion")
+        while PROCESS_REGISTRY:
+            harvest()
+            if PROCESS_REGISTRY:
+                time.sleep(5)
+        # Final harvest to process any stragglers
+        harvest()
+        log.info("--once: all agents harvested, exiting")
     else:
         log.info("Starting continuous dispatch loop")
         while True:
-            runs = sb_select("antfarm_runs", {"status": "eq.running"})
-            if run_id:
-                runs = [r for r in runs if r["id"] == run_id]
-            if not runs:
-                log.info("No running runs — exiting continuous loop")
-                clear_active_flag()
-                set_schedule_enabled(False)
-                break
-            dispatch_once(run_id)
+            harvest()
+            spawned = spawn_pass(run_id)
+            if not PROCESS_REGISTRY and spawned == 0:
+                # No active agents and nothing new to spawn — check for running runs
+                runs = sb_select("antfarm_runs", {"status": "eq.running"})
+                if run_id:
+                    runs = [r for r in runs if r["id"] == run_id]
+                if not runs:
+                    log.info("No running runs — exiting continuous loop")
+                    clear_active_flag()
+                    set_schedule_enabled(False)
+                    break
             time.sleep(15)
 
 
