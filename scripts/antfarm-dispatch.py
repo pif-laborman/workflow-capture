@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-antfarm-dispatch.py — Dispatcher for antfarm workflows
+antfarm-dispatch.py - Dispatcher for antfarm workflows
 
 Polls for pending antfarm steps, claims them, invokes claude with the
 right agent identity, and reports results back via the antfarm CLI.
@@ -18,6 +18,7 @@ it when no running runs remain.
 import json
 import logging
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -101,10 +102,10 @@ SHUTDOWN_REQUESTED = False  # Set by SIGTERM handler to stop daemon loop
 
 
 def handle_sigterm(signum, frame):
-    """SIGTERM handler — sets shutdown flag so daemon loop exits gracefully."""
+    """SIGTERM handler: sets shutdown flag so daemon loop exits gracefully."""
     global SHUTDOWN_REQUESTED
     SHUTDOWN_REQUESTED = True
-    log.info("SIGTERM received — shutting down gracefully")
+    log.info("SIGTERM received, shutting down gracefully")
 
 
 # --- Supabase helpers ---
@@ -235,7 +236,7 @@ def antfarm_fail(step_id: str, error: str) -> dict:
         result = json.loads(r.stdout)
         return result
     except (json.JSONDecodeError, subprocess.TimeoutExpired, Exception) as e:
-        log.error(f"Fail CLI error for {step_id}: {e} — falling back to direct DB update")
+        log.error(f"Fail CLI error for {step_id}: {e}; falling back to direct DB update")
         # Fallback: directly mark step and run as failed in DB
         try:
             step_rows = sb_select("antfarm_steps", {
@@ -328,7 +329,7 @@ def record_token_usage(usage: dict, *, source: str, run_id: str | None = None,
                         step_id: str | None = None, agent: str | None = None,
                         workflow_id: str | None = None,
                         duration_seconds: float = 0):
-    """INSERT a row into token_usage. Best-effort — never raises."""
+    """INSERT a row into token_usage. Best-effort, never raises."""
     if not usage or not usage.get("output_tokens"):
         return
     try:
@@ -365,7 +366,7 @@ def execute_agent(agent_name: str, role: str, prompt: str, repo: str,
     """
     if repo and not Path(repo).is_dir():
         return {"success": False,
-                "error": f"Repo path does not exist: {repo} — check --repo value",
+                "error": f"Repo path does not exist: {repo}. Check --repo value",
                 "usage": {}}
 
     config = ROLE_CONFIG.get(role, ROLE_CONFIG["analysis"])
@@ -387,21 +388,23 @@ def execute_agent(agent_name: str, role: str, prompt: str, repo: str,
     os.chmod(prompt_file, 0o644)
 
     try:
+        cmd_str = " ".join(config["cmd"])
+        safe_repo = shlex.quote(repo)
+        safe_prompt = shlex.quote(prompt_file)
+
         if config["user"] == "ralph":
             # Ralph's credentials are at /home/ralph/.claude/.credentials.json
             # Written by MC server's writeTenantCredentials on admin token refresh.
-            # Owned by ralph — no ACL needed.
-            cmd_str = " ".join(config["cmd"])
+            # Owned by ralph, no ACL needed.
             shell_cmd = (
-                f'unset CLAUDECODE; cd "{repo}" && {cmd_str} < "{prompt_file}"'
+                f'unset CLAUDECODE; cd {safe_repo} && {cmd_str} < {safe_prompt}'
             )
             result = subprocess.run(
                 ["su", "-", "ralph", "-c", shell_cmd],
                 capture_output=True, text=True, timeout=config["timeout"],
             )
         else:
-            cmd_str = " ".join(config["cmd"])
-            shell_cmd = f'cd "{repo}" && {cmd_str} < "{prompt_file}"'
+            shell_cmd = f'cd {safe_repo} && {cmd_str} < {safe_prompt}'
             result = subprocess.run(
                 ["bash", "-c", shell_cmd],
                 capture_output=True, text=True, timeout=config["timeout"],
@@ -426,7 +429,7 @@ def execute_agent(agent_name: str, role: str, prompt: str, repo: str,
 
 def execute_agent_async(agent_name: str, role: str, prompt: str, repo: str,
                         model: str | None = None) -> dict | None:
-    """Invoke claude asynchronously — returns immediately with Popen handle.
+    """Invoke claude asynchronously. Returns immediately with Popen handle.
 
     Returns dict with 'popen' (Popen), 'stdout_path' (str), 'prompt_file' (str)
     on success, or None if the repo path doesn't exist.
@@ -459,28 +462,33 @@ def execute_agent_async(agent_name: str, role: str, prompt: str, repo: str,
     os.chmod(prompt_file, 0o644)
 
     # Open a temp file for stdout capture (not a pipe, to avoid deadlock)
-    stdout_path = tempfile.mktemp(suffix=".log", prefix="antfarm-stdout-")
+    stdout_fh = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".log", prefix="antfarm-stdout-", delete=False
+    )
+    stdout_path = stdout_fh.name
 
     try:
-        stdout_fh = open(stdout_path, "w")
+        cmd_str = " ".join(config["cmd"])
+        safe_repo = shlex.quote(repo)
+        safe_prompt = shlex.quote(prompt_file)
 
         if config["user"] == "ralph":
-            cmd_str = " ".join(config["cmd"])
             shell_cmd = (
-                f'unset CLAUDECODE; cd "{repo}" && {cmd_str} < "{prompt_file}"'
+                f'unset CLAUDECODE; cd {safe_repo} && {cmd_str} < {safe_prompt}'
             )
             popen = subprocess.Popen(
                 ["su", "-", "ralph", "-c", shell_cmd],
                 stdout=stdout_fh, stderr=subprocess.STDOUT, text=True,
             )
         else:
-            cmd_str = " ".join(config["cmd"])
-            shell_cmd = f'cd "{repo}" && {cmd_str} < "{prompt_file}"'
+            shell_cmd = f'cd {safe_repo} && {cmd_str} < {safe_prompt}'
             popen = subprocess.Popen(
                 ["bash", "-c", shell_cmd],
                 stdout=stdout_fh, stderr=subprocess.STDOUT, text=True,
             )
 
+        # Close parent's fd; child inherited it via Popen
+        stdout_fh.close()
         return {"popen": popen, "stdout_path": stdout_path, "prompt_file": prompt_file}
     except Exception as e:
         log.error(f"execute_agent_async failed to spawn: {e}")
@@ -498,6 +506,16 @@ def execute_agent_async(agent_name: str, role: str, prompt: str, repo: str,
 
 
 # --- Harvest completed processes ---
+
+
+def _cleanup_entry_files(entry: dict):
+    """Remove temp files (prompt + stdout) for a registry entry."""
+    for path in [entry.get("prompt_file"), entry.get("stdout_path")]:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 def harvest() -> int:
     """Poll process registry for finished agents and run completion logic.
@@ -518,7 +536,7 @@ def harvest() -> int:
             if elapsed > AGENT_TIMEOUT_SECONDS:
                 log.info(
                     f"TIMEOUT step={step_id} agent={entry['agent_id']} "
-                    f"elapsed={elapsed:.0f}s — killing"
+                    f"elapsed={elapsed:.0f}s, killing"
                 )
                 try:
                     proc.kill()
@@ -545,24 +563,17 @@ def harvest() -> int:
                     run = entry["run"]
                     task = run.get("task", "unknown")
                     notify(f"Antfarm run failed: {task}\n{error_msg}")
-                    log.info(f"RUN FAILED: {entry['run_id'][:8]} — {task}")
+                    log.info(f"RUN FAILED: {entry['run_id'][:8]} - {task}")
                     context = entry.get("context") or {}
                     cleanup_worktree(context)
                     run_evaluator(entry["run_id"])
 
-                # Clean up temp files
-                for path in [entry.get("prompt_file"), entry.get("stdout_path")]:
-                    if path:
-                        try:
-                            os.unlink(path)
-                        except OSError:
-                            pass
-
+                _cleanup_entry_files(entry)
                 del PROCESS_REGISTRY[step_id]
                 harvested += 1
             continue  # Still running and not timed out
 
-        # Process finished — read stdout from temp file
+        # Process finished: read stdout from temp file
         duration = elapsed
         stdout_text = ""
         try:
@@ -592,67 +603,71 @@ def harvest() -> int:
 
         if returncode == 0:
             # --- Success path ---
-            # Look up step_id and type from DB
-            step_rows = sb_select("antfarm_steps", {
-                "id": f"eq.{step_id}",
-                "select": "step_id,type",
-            })
-            wf_step_id = step_rows[0]["step_id"] if step_rows else ""
-            step_type = step_rows[0].get("type", "single") if step_rows else "single"
-            step_cfg = get_step_config(workflow_id, wf_step_id)
-
-            # Skip dispatcher retry logic for loop and verifyEach steps
-            is_loop_step = step_type == "loop"
-            is_verify_each_target = False
-            if not is_loop_step:
-                loop_steps = sb_select("antfarm_steps", {
-                    "run_id": f"eq.{run_id}",
-                    "type": "eq.loop",
-                    "select": "loop_config",
+            try:
+                # Look up step_id and type from DB
+                step_rows = sb_select("antfarm_steps", {
+                    "id": f"eq.{step_id}",
+                    "select": "step_id,type",
                 })
-                for ls in loop_steps:
-                    lc = ls.get("loop_config") or {}
-                    if isinstance(lc, str):
-                        lc = json.loads(lc)
-                    if lc.get("verifyEach") and lc.get("verifyStep") == wf_step_id:
-                        is_verify_each_target = True
-                        break
+                wf_step_id = step_rows[0]["step_id"] if step_rows else ""
+                step_type = step_rows[0].get("type", "single") if step_rows else "single"
+                step_cfg = get_step_config(workflow_id, wf_step_id)
 
-            if not is_loop_step and not is_verify_each_target:
-                if handle_retry_step(run, step_id, step_cfg, parsed["text"]):
-                    log.info(
-                        f"HARVESTED step={step_id} agent={agent_id} "
-                        f"duration={duration:.0f}s status=retry"
-                    )
-                    # Clean up temp files
-                    for path in [entry.get("prompt_file"), entry.get("stdout_path")]:
-                        if path:
-                            try:
-                                os.unlink(path)
-                            except OSError:
-                                pass
-                    del PROCESS_REGISTRY[step_id]
-                    harvested += 1
-                    continue
+                # Skip dispatcher retry logic for loop and verifyEach steps
+                is_loop_step = step_type == "loop"
+                is_verify_each_target = False
+                if not is_loop_step:
+                    loop_steps = sb_select("antfarm_steps", {
+                        "run_id": f"eq.{run_id}",
+                        "type": "eq.loop",
+                        "select": "loop_config",
+                    })
+                    for ls in loop_steps:
+                        lc = ls.get("loop_config") or {}
+                        if isinstance(lc, str):
+                            lc = json.loads(lc)
+                        if lc.get("verifyEach") and lc.get("verifyStep") == wf_step_id:
+                            is_verify_each_target = True
+                            break
 
-            completion = antfarm_complete(step_id, parsed["text"])
-            log.info(
-                f"HARVESTED step={step_id} agent={agent_id} "
-                f"duration={duration:.0f}s status=success"
-            )
+                if not is_loop_step and not is_verify_each_target:
+                    if handle_retry_step(run, step_id, step_cfg, parsed["text"]):
+                        log.info(
+                            f"HARVESTED step={step_id} agent={agent_id} "
+                            f"duration={duration:.0f}s status=retry"
+                        )
+                        _cleanup_entry_files(entry)
+                        del PROCESS_REGISTRY[step_id]
+                        harvested += 1
+                        continue
 
-            if not completion.get("runCompleted"):
-                check_milestone(run_id, run.get("task", "unknown"))
+                completion = antfarm_complete(step_id, parsed["text"])
+                log.info(
+                    f"HARVESTED step={step_id} agent={agent_id} "
+                    f"duration={duration:.0f}s status=success"
+                )
 
-            if completion.get("runCompleted"):
-                task = run.get("task", "unknown")
-                if workflow_id == "content-factory":
-                    deliver_content_factory(run)
-                else:
-                    notify(f"Antfarm run completed: {task}")
-                log.info(f"RUN COMPLETED: {run_id[:8]} — {task}")
-                cleanup_worktree(context)
-                run_evaluator(run_id)
+                if not completion.get("runCompleted"):
+                    check_milestone(run_id, run.get("task", "unknown"))
+
+                if completion.get("runCompleted"):
+                    task = run.get("task", "unknown")
+                    if workflow_id == "content-factory":
+                        deliver_content_factory(run)
+                    else:
+                        notify(f"Antfarm run completed: {task}")
+                    log.info(f"RUN COMPLETED: {run_id[:8]} - {task}")
+                    cleanup_worktree(context)
+                    run_evaluator(run_id)
+            except Exception as e:
+                log.error(
+                    f"Error in harvest success path for step={step_id}: {e}. "
+                    f"Completing step with raw output."
+                )
+                try:
+                    antfarm_complete(step_id, parsed.get("text", stdout_text))
+                except Exception:
+                    pass
         else:
             # --- Failure path ---
             err = (stdout_text or "unknown error")[:2000]
@@ -665,18 +680,11 @@ def harvest() -> int:
             if fail_result.get("runFailed"):
                 task = run.get("task", "unknown")
                 notify(f"Antfarm run failed: {task}\n{err[:200]}")
-                log.info(f"RUN FAILED: {run_id[:8]} — {task}")
+                log.info(f"RUN FAILED: {run_id[:8]} - {task}")
                 cleanup_worktree(context)
                 run_evaluator(run_id)
 
-        # Clean up temp files
-        for path in [entry.get("prompt_file"), entry.get("stdout_path")]:
-            if path:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-
+        _cleanup_entry_files(entry)
         del PROCESS_REGISTRY[step_id]
         harvested += 1
 
@@ -718,7 +726,7 @@ def handle_retry_step(run: dict, current_step_id: str, step_config: dict,
     """
     expects = step_config.get("expects", "")
     if not expects or expects in output:
-        return False  # Output matches — no retry needed
+        return False  # Output matches, no retry needed
 
     on_fail = step_config.get("on_fail", {})
     retry_target = on_fail.get("retry_step")
@@ -745,7 +753,7 @@ def handle_retry_step(run: dict, current_step_id: str, step_config: dict,
     context[f"{current_step_name}_output"] = output
 
     if not retry_target:
-        # No cross-step retry — let normal fail path handle it
+        # No cross-step retry; let normal fail path handle it
         sb_update("antfarm_runs", {"id": run_id}, {"context": context})
         return False
 
@@ -793,7 +801,7 @@ def handle_retry_step(run: dict, current_step_id: str, step_config: dict,
             "context": context,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
-        log.info(f"RUN FAILED run={run_id[:8]} — {error_msg}")
+        log.info(f"RUN FAILED run={run_id[:8]} - {error_msg}")
 
         # Notify, cleanup, and evaluate (same as normal failure path)
         task = run.get("task", "unknown")
@@ -855,7 +863,7 @@ def deliver_content_factory(run: dict):
 
     if draft:
         # Truncate for Telegram (4096 char limit)
-        header = f"Simple Stuff draft ready — {task}\n\n"
+        header = f"Simple Stuff draft ready: {task}\n\n"
         max_body = 4000 - len(header)
         body = draft[:max_body]
         notify(header + body)
@@ -896,7 +904,7 @@ def check_milestone(run_id: str, run_task: str):
         done = sum(1 for s in steps if s["status"] in ("completed", "skipped"))
         pct = int(done / total * 100) if total else 0
 
-        # Check thresholds — use a flag file to avoid duplicate notifications
+        # Check thresholds: use a flag file to avoid duplicate notifications
         flag_dir = Path(f"/tmp/antfarm-milestones-{run_id[:8]}")
         flag_dir.mkdir(exist_ok=True)
 
@@ -938,7 +946,7 @@ def should_dispatch() -> bool:
     if ACTIVE_FLAG.exists():
         return True
 
-    # No flag — check if we should do a fallback scan
+    # No flag: check if we should do a fallback scan
     if IDLE_SCAN_FILE.exists():
         age = time.time() - IDLE_SCAN_FILE.stat().st_mtime
         if age < IDLE_SCAN_INTERVAL:
@@ -950,7 +958,7 @@ def should_dispatch() -> bool:
         IDLE_SCAN_FILE.touch()
         if runs:
             ACTIVE_FLAG.touch()
-            log.info("Fallback scan found running run — activating")
+            log.info("Fallback scan found running run, activating")
             return True
     except Exception as e:
         log.error(f"Fallback scan failed: {e}")
@@ -1110,7 +1118,7 @@ def spawn_pass(run_id_filter: str | None = None) -> int:
         if original_repo and repo and os.path.realpath(repo) == os.path.realpath(original_repo):
             log.error(
                 f"WORKTREE SAFETY: run={run_id[:8]} worktree_path equals original_repo "
-                f"({repo}) — refusing to dispatch."
+                f"({repo}); refusing to dispatch."
             )
             sb_update("antfarm_runs", {"id": run_id}, {
                 "status": "failed",
@@ -1148,12 +1156,15 @@ def spawn_pass(run_id_filter: str | None = None) -> int:
                 continue
 
             step_id = claim["stepId"]
+            if step_id in PROCESS_REGISTRY:
+                log.warning(f"step_id {step_id} already in registry, skipping")
+                continue
             task_input = claim["input"]
             claimed_run_id = claim.get("runId", run_id)
             if claimed_run_id != run_id:
                 log.warning(
                     f"CLAIM MISMATCH: expected run={run_id[:8]} got run={claimed_run_id[:8]} "
-                    f"step={step_id} agent={agent_id} — skipping"
+                    f"step={step_id} agent={agent_id}, skipping"
                 )
                 continue
 
@@ -1263,176 +1274,6 @@ def close_stale_runs():
         log.error(f"Stale run check failed: {e}")
 
 
-def dispatch_once(run_id_filter: str | None = None) -> int:
-    """Single dispatch pass. Returns number of steps dispatched."""
-    prune_stale_worktrees()
-    params = {"status": "eq.running"}
-    if run_id_filter:
-        params["id"] = f"eq.{run_id_filter}"
-
-    runs = sb_select("antfarm_runs", params)
-    if not runs:
-        log.info("No running runs — clearing flag, disabling schedule")
-        clear_active_flag()
-        set_schedule_enabled(False)
-        return 0
-
-    log.info(f"Found {len(runs)} running run(s)")
-    dispatched = 0
-
-    for run in runs:
-        run_id = run["id"]
-        workflow_id = run["workflow_id"]
-        context = run.get("context") or {}
-        if isinstance(context, str):
-            context = json.loads(context)
-        repo = context.get("worktree_path") or context.get("repo", "")
-
-        # Safety check: worktree must not equal original repo (cross-run contamination)
-        original_repo = context.get("original_repo", "")
-        if original_repo and repo and os.path.realpath(repo) == os.path.realpath(original_repo):
-            log.error(
-                f"WORKTREE SAFETY: run={run_id[:8]} worktree_path equals original_repo "
-                f"({repo}) — refusing to dispatch. Setup likely failed to create worktree."
-            )
-            sb_update("antfarm_runs", {"id": run_id}, {
-                "status": "failed",
-                "error": "Worktree not isolated: worktree_path equals original_repo",
-            })
-            continue
-
-        try:
-            wf = load_workflow(workflow_id)
-        except FileNotFoundError:
-            log.error(f"Workflow not found: {workflow_id}")
-            continue
-
-        for agent_def in wf.get("agents", []):
-            agent_id = f"{workflow_id}_{agent_def['id']}"
-            agent_name = agent_def["id"]
-            role = agent_def.get("role", "analysis")
-            model = agent_def.get("model")
-
-            if not antfarm_peek(agent_id):
-                continue
-
-            claim = antfarm_claim(agent_id, run_id)
-            if not claim:
-                continue
-
-            step_id = claim["stepId"]
-            task_input = claim["input"]
-            claimed_run_id = claim.get("runId", run_id)
-            if claimed_run_id != run_id:
-                log.warning(
-                    f"CLAIM MISMATCH: expected run={run_id[:8]} got run={claimed_run_id[:8]} "
-                    f"step={step_id} agent={agent_id} — skipping"
-                )
-                continue
-            log.info(f"CLAIMED step={step_id} agent={agent_id} run={run_id[:8]}")
-
-            prompt = build_prompt(agent_name, task_input)
-            start = time.time()
-            result = execute_agent(agent_name, role, prompt, repo, model=model)
-            duration = time.time() - start
-
-            # Record token usage (best-effort, never blocks dispatch)
-            record_token_usage(
-                result.get("usage", {}),
-                source="antfarm",
-                run_id=run_id,
-                step_id=step_id,
-                agent=agent_name,
-                workflow_id=workflow_id,
-                duration_seconds=duration,
-            )
-
-            if result["success"]:
-                # Check expects / retry_step before completing
-                # Find which workflow step this DB step belongs to
-                step_rows = sb_select("antfarm_steps", {
-                    "id": f"eq.{step_id}",
-                    "select": "step_id,type",
-                })
-                wf_step_id = step_rows[0]["step_id"] if step_rows else ""
-                step_type = step_rows[0].get("type", "single") if step_rows else "single"
-                step_cfg = get_step_config(workflow_id, wf_step_id)
-
-                # Skip dispatcher retry logic for loop steps and their
-                # paired verify steps. Loop steps have their own completion
-                # semantics (per-story iteration, verifyEach) managed by
-                # antfarm's completeStep. The dispatcher's expects check
-                # doesn't understand that a loop step won't emit STATUS: done
-                # until all stories are finished.
-                is_loop_step = step_type == "loop"
-                is_verify_each_target = False
-                if not is_loop_step:
-                    # Check if this step is the verify target of a loop step
-                    loop_steps = sb_select("antfarm_steps", {
-                        "run_id": f"eq.{run_id}",
-                        "type": "eq.loop",
-                        "select": "loop_config",
-                    })
-                    for ls in loop_steps:
-                        lc = ls.get("loop_config") or {}
-                        if isinstance(lc, str):
-                            lc = json.loads(lc)
-                        if lc.get("verifyEach") and lc.get("verifyStep") == wf_step_id:
-                            is_verify_each_target = True
-                            break
-
-                if not is_loop_step and not is_verify_each_target:
-                    if handle_retry_step(run, step_id, step_cfg, result["output"]):
-                        log.info(
-                            f"RETRY_STEP step={step_id} agent={agent_id} "
-                            f"duration={duration:.0f}s"
-                        )
-                        dispatched += 1
-                        continue
-
-                completion = antfarm_complete(step_id, result["output"])
-                log.info(
-                    f"COMPLETED step={step_id} agent={agent_id} "
-                    f"duration={duration:.0f}s"
-                )
-                dispatched += 1
-
-                # Milestone check (25%/50%/75% progress notifications)
-                if not completion.get("runCompleted"):
-                    check_milestone(run_id, run.get("task", "unknown"))
-
-                if completion.get("runCompleted"):
-                    task = run.get("task", "unknown")
-                    if workflow_id == "content-factory":
-                        deliver_content_factory(run)
-                    else:
-                        notify(f"Antfarm run completed: {task}")
-                    log.info(f"RUN COMPLETED: {run_id[:8]} — {task}")
-                    cleanup_worktree(context)
-                    run_evaluator(run_id)
-            else:
-                fail_result = antfarm_fail(step_id, result["error"])
-                log.info(
-                    f"FAILED step={step_id} agent={agent_id} "
-                    f"error={result['error'][:100]} duration={duration:.0f}s"
-                )
-
-                if fail_result.get("runFailed"):
-                    task = run.get("task", "unknown")
-                    notify(
-                        f"Antfarm run failed: {task}\n{result['error'][:200]}"
-                    )
-                    log.info(f"RUN FAILED: {run_id[:8]} — {task}")
-                    cleanup_worktree(context)
-                    run_evaluator(run_id)
-
-    # Check for stuck runs that should be auto-closed
-    close_stale_runs()
-
-    log.info(f"Pass complete — dispatched {dispatched} step(s)")
-    return dispatched
-
-
 # --- Startup recovery ---
 
 def recover_orphaned_steps() -> int:
@@ -1509,7 +1350,7 @@ def daemon_loop(run_id_filter: str | None = None):
 
         # Kill any agents still running after grace period
         if PROCESS_REGISTRY:
-            log.info(f"Grace period expired — killing {len(PROCESS_REGISTRY)} remaining agents")
+            log.info(f"Grace period expired, killing {len(PROCESS_REGISTRY)} remaining agents")
             for step_id, entry in list(PROCESS_REGISTRY.items()):
                 try:
                     entry["popen"].kill()
@@ -1517,7 +1358,7 @@ def daemon_loop(run_id_filter: str | None = None):
                     pass
             harvest()
 
-    log.info("Shutdown complete — harvested all remaining agents")
+    log.info("Shutdown complete. Harvested all remaining agents")
 
 
 # --- Entry point ---
@@ -1565,12 +1406,12 @@ def main():
             harvest()
             spawned = spawn_pass(run_id)
             if not PROCESS_REGISTRY and spawned == 0:
-                # No active agents and nothing new to spawn — check for running runs
+                # No active agents and nothing new to spawn: check for running runs
                 runs = sb_select("antfarm_runs", {"status": "eq.running"})
                 if run_id:
                     runs = [r for r in runs if r["id"] == run_id]
                 if not runs:
-                    log.info("No running runs — exiting continuous loop")
+                    log.info("No running runs, exiting continuous loop")
                     clear_active_flag()
                     set_schedule_enabled(False)
                     break
