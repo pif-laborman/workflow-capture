@@ -179,4 +179,5 @@ Started: 2026-04-11
 - Wrote 23 tests: header rendering (2), stats row (3), step cards (8 — count, zero-padding, action text, high/medium/low confidence, explicit confidence, expand/collapse), open questions (3 — rendering, explanation text, empty hidden), download buttons (4 — render, workflow blob, session blob), footer navigation (2), no-data fallback (1)
 - Files changed: components/ResultsScreen.tsx, components/AppShell.tsx, lib/types.ts, app/globals.css, app/__tests__/results-screen.test.tsx
 - **Learnings:** Don't mock document.body.appendChild in download tests — it breaks React's render. Instead mock createElement to intercept anchor click. Use origCreateElement = document.createElement.bind(document) to keep real DOM working while intercepting specific tags.
+- **Fix (verify retry):** vi.fn() without type parameter infers mock.calls as `never[][]`. Type the mock: `vi.fn<(obj: Blob) => string>()` and use non-null assertion `mock.calls[0]![0]` to fix TS2352/TS2493.
 ---
