@@ -66,3 +66,13 @@ Started: 2026-04-11
 - Files changed: scripts/antfarm-dispatch.py, scripts/test_daemon_loop.py, scripts/test_sigterm_handler.py
 - **Learnings:** When patching `_mod.time` as a MagicMock, any new code that calls `time.time()` in the same function will get a MagicMock return — must explicitly set `mock_time.time` with a side_effect iterator that returns increasing values to avoid infinite loops in time-comparison while loops
 ---
+
+## 2026-04-11 - US-006: Startup recovery for orphaned steps
+- Added `recover_orphaned_steps()` function that queries antfarm_steps for status='running' and resets them to 'pending'
+- Loop steps (type='loop') preserve `current_story_id` in the reset so they resume the right story
+- Called at start of `daemon_loop()` before entering the poll loop
+- Returns count of recovered steps; logs each recovery with step_id and run_id
+- Updated existing daemon_loop and sigterm tests to mock `recover_orphaned_steps` (added as outermost decorator)
+- Files changed: scripts/antfarm-dispatch.py, scripts/test_recover_orphaned_steps.py, scripts/test_daemon_loop.py, scripts/test_sigterm_handler.py
+- **Learnings:** When adding a new function call to daemon_loop, all existing tests that call daemon_loop need the new function mocked — add `@patch.object(_mod, "recover_orphaned_steps", return_value=0)` as outermost decorator and corresponding param at end of test method signature
+---
