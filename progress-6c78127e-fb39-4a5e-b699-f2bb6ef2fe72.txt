@@ -24,6 +24,7 @@ Started: 2026-04-11
 - Testing-library tests need explicit `cleanup()` in `afterEach` to avoid DOM accumulation across tests
 - AppStateContext includes selectedWorkflowId/setSelectedWorkflowId for navigating to saved workflow results
 - localStorage key for saved workflows: 'workflow-capture-sessions' (SavedWorkflow[])
+- Storage CRUD in `lib/storage.ts`: saveWorkflow, getWorkflows, getWorkflow, deleteWorkflow
 
 ---
 
@@ -180,4 +181,14 @@ Started: 2026-04-11
 - Files changed: components/ResultsScreen.tsx, components/AppShell.tsx, lib/types.ts, app/globals.css, app/__tests__/results-screen.test.tsx
 - **Learnings:** Don't mock document.body.appendChild in download tests — it breaks React's render. Instead mock createElement to intercept anchor click. Use origCreateElement = document.createElement.bind(document) to keep real DOM working while intercepting specific tags.
 - **Fix (verify retry):** vi.fn() without type parameter infers mock.calls as `never[][]`. Type the mock: `vi.fn<(obj: Blob) => string>()` and use non-null assertion `mock.calls[0]![0]` to fix TS2352/TS2493.
+---
+
+## 2026-04-12 - US-016: localStorage persistence and home screen integration
+- Created lib/storage.ts: saveWorkflow, getWorkflows (sorted by date desc), getWorkflow(id), deleteWorkflow(id)
+- Refactored HomeScreen to use getWorkflows() from storage module instead of inline localStorage
+- Refactored ResultsScreen to use saveWorkflow/getWorkflow from storage module instead of inline localStorage
+- Full loop verified: home → new capture → record → process → results (auto-save) → home (shows new workflow)
+- Wrote 17 tests: 12 storage unit tests (save, get all, get by id, delete, sort, corrupted data), 4 home integration, 3 results integration
+- Files changed: lib/storage.ts, components/HomeScreen.tsx, components/ResultsScreen.tsx, app/__tests__/storage.test.ts, app/__tests__/storage-integration.test.tsx
+- **Learnings:** Extracting localStorage logic into a pure module makes both unit testing and component refactoring clean — components import functions instead of duplicating key strings and parse logic.
 ---
