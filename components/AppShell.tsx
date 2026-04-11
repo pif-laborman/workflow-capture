@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppState } from '@/lib/types';
 import {
   AppStateContext,
@@ -21,10 +21,43 @@ function ScreenPlaceholder({ state }: { state: AppState }) {
   );
 }
 
+export function isSupportedBrowser(): boolean {
+  if (typeof navigator === 'undefined') return true; // SSR — assume supported
+  const ua = navigator.userAgent;
+  const isChrome = /Chrome\//.test(ua) && !/Edg\//.test(ua);
+  const isEdge = /Edg\//.test(ua);
+  return isChrome || isEdge;
+}
+
+function UnsupportedBrowserMessage() {
+  return (
+    <div data-testid="unsupported-browser" className="unsupported-browser">
+      <div className="unsupported-browser-content">
+        <h1 className="unsupported-browser-headline">Unsupported Browser</h1>
+        <p className="unsupported-browser-text">
+          Workflow Capture requires screen sharing and speech recognition APIs that are only available in Google Chrome or Microsoft Edge.
+        </p>
+        <p className="unsupported-browser-hint">
+          Please open this page in Chrome or Edge to continue.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function AppShell() {
   const [currentState, setState] = useState<AppState>(AppState.Home);
   const [sessionData, setSessionData] = useState<SessionData>(initialSessionData);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [browserSupported, setBrowserSupported] = useState(true);
+
+  useEffect(() => {
+    setBrowserSupported(isSupportedBrowser());
+  }, []);
+
+  if (!browserSupported) {
+    return <UnsupportedBrowserMessage />;
+  }
 
   function renderScreen() {
     switch (currentState) {

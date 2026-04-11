@@ -1034,3 +1034,43 @@ a {
   padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
+
+/* ==========================================================================
+   Unsupported Browser
+   ========================================================================== */
+
+.unsupported-browser {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--space-4);
+  background: var(--bg-page);
+}
+
+.unsupported-browser-content {
+  max-width: 480px;
+  text-align: center;
+}
+
+.unsupported-browser-headline {
+  font-family: var(--font-heading);
+  font-weight: 300;
+  font-size: 32px;
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
+}
+
+.unsupported-browser-text {
+  font-family: var(--font-body);
+  font-size: var(--body);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: var(--space-3);
+}
+
+.unsupported-browser-hint {
+  font-family: var(--font-mono);
+  font-size: var(--small);
+  color: var(--text-tertiary);
+}

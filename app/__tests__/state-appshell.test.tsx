@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, cleanup } from '@testing-library/react';
 import { useState } from 'react';
 import { AppState } from '@/lib/types';
@@ -9,8 +9,22 @@ import {
 } from '@/lib/state';
 import AppShell from '@/components/AppShell';
 
+const originalUserAgent = navigator.userAgent;
+
+beforeEach(() => {
+  // Simulate Chrome so AppShell doesn't show unsupported browser message
+  Object.defineProperty(navigator, 'userAgent', {
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    configurable: true,
+  });
+});
+
 afterEach(() => {
   cleanup();
+  Object.defineProperty(navigator, 'userAgent', {
+    value: originalUserAgent,
+    configurable: true,
+  });
 });
 
 describe('AppStateContext', () => {
