@@ -1,0 +1,17 @@
+[Unit]
+Description=Antfarm Dispatch Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+ExecStart=/bin/bash -c 'source /root/.pif-env && exec python3 /root/scripts/antfarm-dispatch.py --daemon'
+Restart=on-failure
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target
