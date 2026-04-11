@@ -14,6 +14,8 @@ export interface AppStateContextValue {
   setState: (state: AppState) => void;
   sessionData: SessionData;
   setSessionData: (data: SessionData) => void;
+  selectedWorkflowId: string | null;
+  setSelectedWorkflowId: (id: string | null) => void;
 }
 
 export const initialSessionData: SessionData = {
@@ -27,6 +29,8 @@ export const AppStateContext = createContext<AppStateContextValue>({
   setState: () => {},
   sessionData: initialSessionData,
   setSessionData: () => {},
+  selectedWorkflowId: null,
+  setSelectedWorkflowId: () => {},
 });
 
 export function useAppState() {

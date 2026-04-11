@@ -42,6 +42,8 @@ describe('AppStateContext', () => {
             setState,
             sessionData: initialSessionData,
             setSessionData: () => {},
+            selectedWorkflowId: null,
+            setSelectedWorkflowId: () => {},
           }}
         >
           {children}
@@ -84,6 +86,8 @@ describe('AppStateContext', () => {
             setState,
             sessionData: initialSessionData,
             setSessionData: () => {},
+            selectedWorkflowId: null,
+            setSelectedWorkflowId: () => {},
           }}
         >
           {children}
@@ -123,6 +127,8 @@ describe('AppStateContext', () => {
             setState,
             sessionData: initialSessionData,
             setSessionData: () => {},
+            selectedWorkflowId: null,
+            setSelectedWorkflowId: () => {},
           }}
         >
           {children}
@@ -165,16 +171,15 @@ describe('AppShell', () => {
     expect(screen.getByTestId('app-shell')).toBeTruthy();
   });
 
-  it('renders home screen placeholder by default', () => {
+  it('renders home screen by default', () => {
     render(<AppShell />);
-    const placeholder = screen.getByTestId('screen-home');
-    expect(placeholder).toBeTruthy();
-    expect(placeholder.textContent).toBe('home');
+    const homeScreen = screen.getByTestId('home-screen');
+    expect(homeScreen).toBeTruthy();
   });
 
   it('provides state context to child components', () => {
     render(<AppShell />);
-    // AppShell renders a ScreenPlaceholder showing current state
-    expect(screen.getByTestId('screen-home').textContent).toBe('home');
+    // AppShell renders HomeScreen in home state
+    expect(screen.getByTestId('home-screen')).toBeTruthy();
   });
 });

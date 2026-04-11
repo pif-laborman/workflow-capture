@@ -192,3 +192,168 @@ a {
   border-radius: var(--radius-md);
   padding: var(--space-6);
 }
+
+/* ==========================================================================
+   Home Screen
+   ========================================================================== */
+
+.home-screen {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-6);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.home-brand {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+.home-header {
+  margin-bottom: var(--space-8);
+}
+
+.home-header-top {
+  margin-bottom: var(--space-6);
+}
+
+.home-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.home-title {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: var(--text-2xl);
+  color: var(--text-primary);
+  margin-bottom: var(--space-1);
+}
+
+.home-subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* Empty state */
+
+.home-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: var(--space-5);
+}
+
+.home-empty-message {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: var(--text-xl);
+  color: var(--text-secondary);
+}
+
+/* Workflow list */
+
+.workflow-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+}
+
+.workflow-card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.workflow-card:hover {
+  border-color: var(--text-tertiary);
+  box-shadow: var(--shadow-sm);
+}
+
+.workflow-card-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.workflow-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.workflow-card-name {
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  margin-bottom: var(--space-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workflow-card-meta {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.meta-sep {
+  color: var(--text-tertiary);
+}
+
+.workflow-card-arrow {
+  font-size: var(--text-2xl);
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* Confidence dots */
+
+.confidence-dots {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.confidence-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* Footer */
+
+.home-footer {
+  margin-top: var(--space-10);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.home-footer p {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}

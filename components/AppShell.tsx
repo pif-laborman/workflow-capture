@@ -7,6 +7,7 @@ import {
   SessionData,
   initialSessionData,
 } from '@/lib/state';
+import HomeScreen from '@/components/HomeScreen';
 
 function ScreenPlaceholder({ state }: { state: AppState }) {
   return (
@@ -19,13 +20,23 @@ function ScreenPlaceholder({ state }: { state: AppState }) {
 export default function AppShell() {
   const [currentState, setState] = useState<AppState>(AppState.Home);
   const [sessionData, setSessionData] = useState<SessionData>(initialSessionData);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+
+  function renderScreen() {
+    switch (currentState) {
+      case AppState.Home:
+        return <HomeScreen />;
+      default:
+        return <ScreenPlaceholder state={currentState} />;
+    }
+  }
 
   return (
     <AppStateContext.Provider
-      value={{ currentState, setState, sessionData, setSessionData }}
+      value={{ currentState, setState, sessionData, setSessionData, selectedWorkflowId, setSelectedWorkflowId }}
     >
       <div data-testid="app-shell" className="app-shell">
-        <ScreenPlaceholder state={currentState} />
+        {renderScreen()}
       </div>
     </AppStateContext.Provider>
   );
