@@ -109,3 +109,12 @@ Started: 2026-04-11
 - Files changed: lib/hooks/useSpeechRecognition.ts, lib/hooks/useTTS.ts, app/__tests__/speech-tts-hooks.test.ts
 - **Learnings:** SpeechRecognition/SpeechRecognitionEvent types are not in TypeScript's standard DOM lib — must define custom interfaces. Mock constructors in vitest must use `function` declarations (not arrow fns) to be callable with `new`. ESLint `@typescript-eslint/no-this-alias` blocks `mockInstance = this` in classes — use a factory function returning a plain object instead.
 ---
+
+## 2026-04-11 - US-010: Session event log manager
+- Created lib/hooks/useEventLog.ts: hook using useRef for event array, exports addFrame, addTranscript, addInterjection, getTranscriptWindow, clear, and events array
+- Event types: Frame (frame_base64), Transcript (text, isFinal), Interjection (message, reason) — all with timestamp_ms
+- getTranscriptWindow calculates cutoff from latest event timestamp, filters final transcripts within window, concatenates text
+- Wrote 14 tests: empty initial state, addFrame (single + multiple), addTranscript (final + interim), addInterjection, chronological ordering with mixed types, getTranscriptWindow (time filtering, interim exclusion, empty cases, non-transcript exclusion), clear (reset + re-add)
+- Files changed: lib/hooks/useEventLog.ts, app/__tests__/event-log.test.ts
+- **Learnings:** useRef + useState version counter pattern works well for mutable arrays that need to trigger re-renders — the ref holds the data, the counter forces React to re-render when it changes.
+---
