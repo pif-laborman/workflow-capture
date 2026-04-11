@@ -101,3 +101,11 @@ Started: 2026-04-11
 - Files changed: lib/hooks/useMediaCapture.ts, lib/hooks/useFrameSampler.ts, app/__tests__/media-capture-hooks.test.ts
 - **Learnings:** jsdom logs "Not implemented: HTMLMediaElement's pause() method" warnings for video elements — harmless in tests. Mock canvas.getContext and canvas.toDataURL with proper type casts (`as typeof canvas.getContext`) to satisfy TypeScript.
 ---
+
+## 2026-04-11 - US-009: Speech recognition and TTS hooks
+- Created lib/hooks/useSpeechRecognition.ts: hook wrapping Web Speech API with continuous + interimResults mode, returns transcriptChunks (TranscriptChunk[]), interimText, isListening, start/stop/pause/resume. Auto-restarts on unexpected end events. Custom minimal interfaces for SpeechRecognition (not in TS DOM lib).
+- Created lib/hooks/useTTS.ts: hook wrapping SpeechSynthesis with speak(text) returning a Promise, isSpeaking state, cancel(). Accepts onSpeakStart/onSpeakEnd callbacks for mic muting during playback. Uses ref for options to avoid stale closures.
+- Wrote 14 tests: useSpeechRecognition (8 — default state, continuous+interimResults mode, final transcript chunks with timestamp/isFinal, interim vs final separation, pause/resume control, auto-restart on end, no restart after stop, stop resets state), useTTS (6 — default state, speak calls SpeechSynthesis, isSpeaking during playback, onSpeakStart/onSpeakEnd callbacks, cancels before new speech, cancel method)
+- Files changed: lib/hooks/useSpeechRecognition.ts, lib/hooks/useTTS.ts, app/__tests__/speech-tts-hooks.test.ts
+- **Learnings:** SpeechRecognition/SpeechRecognitionEvent types are not in TypeScript's standard DOM lib — must define custom interfaces. Mock constructors in vitest must use `function` declarations (not arrow fns) to be callable with `new`. ESLint `@typescript-eslint/no-this-alias` blocks `mockInstance = this` in classes — use a factory function returning a plain object instead.
+---
