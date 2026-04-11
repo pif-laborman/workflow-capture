@@ -357,3 +357,83 @@ a {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+
+/* ==========================================================================
+   New Capture Screen
+   ========================================================================== */
+
+.new-capture-screen {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-6);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.new-capture-top {
+  margin-bottom: var(--space-12);
+}
+
+.new-capture-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-6);
+}
+
+.new-capture-headline {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: 48px;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.new-capture-contract {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 480px;
+}
+
+.new-capture-hint {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  max-width: 480px;
+}
+
+.new-capture-input {
+  width: 100%;
+  max-width: 320px;
+  padding: var(--space-3) var(--space-6);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  outline: none;
+  text-align: center;
+  transition: border-color 0.15s ease;
+}
+
+.new-capture-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.new-capture-input:focus {
+  border-color: var(--text-secondary);
+}
+
+.new-capture-footer {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin-top: var(--space-4);
+}

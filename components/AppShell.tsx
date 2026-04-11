@@ -8,6 +8,7 @@ import {
   initialSessionData,
 } from '@/lib/state';
 import HomeScreen from '@/components/HomeScreen';
+import NewCaptureScreen from '@/components/NewCaptureScreen';
 
 function ScreenPlaceholder({ state }: { state: AppState }) {
   return (
@@ -26,6 +27,8 @@ export default function AppShell() {
     switch (currentState) {
       case AppState.Home:
         return <HomeScreen />;
+      case AppState.NewCapture:
+        return <NewCaptureScreen />;
       default:
         return <ScreenPlaceholder state={currentState} />;
     }
