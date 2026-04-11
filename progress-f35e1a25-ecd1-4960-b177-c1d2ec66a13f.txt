@@ -56,3 +56,13 @@ Started: 2026-04-11
 - Files changed: scripts/antfarm-dispatch.py, scripts/test_daemon_loop.py
 - **Learnings:** When testing sleep-based loops, set SHUTDOWN_REQUESTED inside the mock sleep callback (not during spawn) to let the sleep accumulation actually run; patching `_mod.time` replaces the module reference so `time.sleep` in daemon_loop uses the mock
 ---
+
+## 2026-04-11 - US-005: SIGTERM handler and graceful shutdown
+- Added `import signal` to module imports
+- Added `handle_sigterm(signum, frame)` that sets SHUTDOWN_REQUESTED=True and logs the event
+- Registered SIGTERM handler in `daemon_loop()` before main loop via `signal.signal(signal.SIGTERM, handle_sigterm)`
+- After main loop exits: 120s grace period with harvest() every 5s, then .kill() + final harvest for stragglers
+- Fixed existing `test_adaptive_interval_active` to provide `mock_time.time` side_effect for new shutdown path
+- Files changed: scripts/antfarm-dispatch.py, scripts/test_daemon_loop.py, scripts/test_sigterm_handler.py
+- **Learnings:** When patching `_mod.time` as a MagicMock, any new code that calls `time.time()` in the same function will get a MagicMock return — must explicitly set `mock_time.time` with a side_effect iterator that returns increasing values to avoid infinite loops in time-comparison while loops
+---
