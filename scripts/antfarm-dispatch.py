@@ -1035,6 +1035,151 @@ def prune_stale_worktrees():
         pass
 
 
+# --- Concurrency control ---
+
+PER_RUN_CAP = 1  # Max concurrent agents per run (fair sharing)
+
+
+def get_max_concurrent() -> int:
+    """Query Supabase policies table for global concurrency cap.
+
+    Returns the value of 'max_concurrent_antfarm_agents' policy, defaulting to 3.
+    """
+    try:
+        rows = sb_select("policies", {
+            "key": "eq.max_concurrent_antfarm_agents",
+            "select": "value",
+        })
+        if rows:
+            return int(rows[0]["value"])
+    except Exception as e:
+        log.error(f"Failed to fetch max_concurrent policy: {e}")
+    return 3
+
+
+def spawn_pass(run_id_filter: str | None = None) -> int:
+    """Scan for claimable work and spawn agents respecting concurrency limits.
+
+    Returns count of newly spawned agents.
+    """
+    prune_stale_worktrees()
+
+    params = {"status": "eq.running"}
+    if run_id_filter:
+        params["id"] = f"eq.{run_id_filter}"
+
+    runs = sb_select("antfarm_runs", params)
+    if not runs:
+        log.info("No running runs found in spawn_pass")
+        return 0
+
+    global_cap = get_max_concurrent()
+    spawned = 0
+
+    for run in runs:
+        # Global cap check
+        if len(PROCESS_REGISTRY) >= global_cap:
+            log.info("CAPACITY: global cap reached")
+            break
+
+        run_id = run["id"]
+
+        # Per-run cap check
+        run_active = sum(1 for e in PROCESS_REGISTRY.values() if e["run_id"] == run_id)
+        if run_active >= PER_RUN_CAP:
+            log.info(f"CAPACITY: run {run_id[:8]} already has active agent")
+            continue
+
+        workflow_id = run["workflow_id"]
+        context = run.get("context") or {}
+        if isinstance(context, str):
+            context = json.loads(context)
+        repo = context.get("worktree_path") or context.get("repo", "")
+
+        # Safety check: worktree must not equal original repo
+        original_repo = context.get("original_repo", "")
+        if original_repo and repo and os.path.realpath(repo) == os.path.realpath(original_repo):
+            log.error(
+                f"WORKTREE SAFETY: run={run_id[:8]} worktree_path equals original_repo "
+                f"({repo}) — refusing to dispatch."
+            )
+            sb_update("antfarm_runs", {"id": run_id}, {
+                "status": "failed",
+                "error": "Worktree not isolated: worktree_path equals original_repo",
+            })
+            continue
+
+        try:
+            wf = load_workflow(workflow_id)
+        except FileNotFoundError:
+            log.error(f"Workflow not found: {workflow_id}")
+            continue
+
+        for agent_def in wf.get("agents", []):
+            # Re-check global cap inside inner loop
+            if len(PROCESS_REGISTRY) >= global_cap:
+                log.info("CAPACITY: global cap reached")
+                break
+
+            # Re-check per-run cap
+            run_active = sum(1 for e in PROCESS_REGISTRY.values() if e["run_id"] == run_id)
+            if run_active >= PER_RUN_CAP:
+                break
+
+            agent_id = f"{workflow_id}_{agent_def['id']}"
+            agent_name = agent_def["id"]
+            role = agent_def.get("role", "analysis")
+            model = agent_def.get("model")
+
+            if not antfarm_peek(agent_id):
+                continue
+
+            claim = antfarm_claim(agent_id, run_id)
+            if not claim:
+                continue
+
+            step_id = claim["stepId"]
+            task_input = claim["input"]
+            claimed_run_id = claim.get("runId", run_id)
+            if claimed_run_id != run_id:
+                log.warning(
+                    f"CLAIM MISMATCH: expected run={run_id[:8]} got run={claimed_run_id[:8]} "
+                    f"step={step_id} agent={agent_id} — skipping"
+                )
+                continue
+
+            log.info(f"CLAIMED step={step_id} agent={agent_id} run={run_id[:8]}")
+            prompt = build_prompt(agent_name, task_input)
+            result = execute_agent_async(agent_name, role, prompt, repo, model=model)
+
+            if result is None:
+                log.error(f"Failed to spawn agent for step={step_id}")
+                antfarm_fail(step_id, "Failed to spawn agent process")
+                continue
+
+            PROCESS_REGISTRY[step_id] = {
+                "popen": result["popen"],
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "start_time": time.time(),
+                "stdout_path": result["stdout_path"],
+                "prompt_file": result["prompt_file"],
+                "workflow_id": workflow_id,
+                "agent_name": agent_name,
+                "role": role,
+                "run": run,
+                "context": context,
+            }
+            log.info(
+                f"SPAWNED step={step_id} agent={agent_id} run={run_id[:8]} "
+                f"pid={result['popen'].pid}"
+            )
+            spawned += 1
+
+    close_stale_runs()
+    return spawned
+
+
 # --- Main dispatch ---
 
 def close_stale_runs():
