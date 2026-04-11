@@ -121,6 +121,9 @@ class TestDaemonLoop(unittest.TestCase):
                 _mod.SHUTDOWN_REQUESTED = True
 
         mock_time.sleep = track_sleep
+        # time.time() returns 0 for grace deadline calc, then 200 to exceed it
+        time_vals = iter([0, 200])
+        mock_time.time = MagicMock(side_effect=lambda: next(time_vals, 200))
 
         daemon_loop()
 

@@ -18,6 +18,7 @@ it when no running runs remain.
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,13 @@ if sys.stderr.isatty():
 PROCESS_REGISTRY: dict = {}
 AGENT_TIMEOUT_SECONDS = 1200  # 20 minutes
 SHUTDOWN_REQUESTED = False  # Set by SIGTERM handler to stop daemon loop
+
+
+def handle_sigterm(signum, frame):
+    """SIGTERM handler — sets shutdown flag so daemon loop exits gracefully."""
+    global SHUTDOWN_REQUESTED
+    SHUTDOWN_REQUESTED = True
+    log.info("SIGTERM received — shutting down gracefully")
 
 
 # --- Supabase helpers ---
@@ -1432,6 +1440,8 @@ def daemon_loop(run_id_filter: str | None = None):
     global SHUTDOWN_REQUESTED
     log.info("Starting daemon mode")
 
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     while not SHUTDOWN_REQUESTED:
         harvested = harvest()
         spawned = spawn_pass(run_id_filter)
@@ -1447,7 +1457,27 @@ def daemon_loop(run_id_filter: str | None = None):
             time.sleep(min(1, interval - elapsed))
             elapsed += 1
 
-    log.info("Daemon exiting")
+    # --- Graceful shutdown: wait for active agents then clean up ---
+    active_count = len(PROCESS_REGISTRY)
+    if active_count > 0:
+        log.info(f"Waiting for {active_count} active agents to finish (grace period 120s)")
+        grace_deadline = time.time() + 120
+        while PROCESS_REGISTRY and time.time() < grace_deadline:
+            harvest()
+            if PROCESS_REGISTRY:
+                time.sleep(5)
+
+        # Kill any agents still running after grace period
+        if PROCESS_REGISTRY:
+            log.info(f"Grace period expired — killing {len(PROCESS_REGISTRY)} remaining agents")
+            for step_id, entry in list(PROCESS_REGISTRY.items()):
+                try:
+                    entry["popen"].kill()
+                except OSError:
+                    pass
+            harvest()
+
+    log.info("Shutdown complete — harvested all remaining agents")
 
 
 # --- Entry point ---
