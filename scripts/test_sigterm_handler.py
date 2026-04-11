@@ -63,11 +63,12 @@ class TestDaemonLoopSigtermRegistration(unittest.TestCase):
         _mod.SHUTDOWN_REQUESTED = False
         _mod.PROCESS_REGISTRY.clear()
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
     @patch.object(_mod.signal, "signal")
-    def test_registers_sigterm_handler(self, mock_signal_fn, mock_harvest, mock_spawn, mock_time):
+    def test_registers_sigterm_handler(self, mock_signal_fn, mock_harvest, mock_spawn, mock_time, mock_recover):
         """daemon_loop registers handle_sigterm for SIGTERM."""
         mock_spawn.side_effect = lambda run_id_filter=None: (
             setattr(_mod, "SHUTDOWN_REQUESTED", True), 0
@@ -91,11 +92,12 @@ class TestGracefulShutdown(unittest.TestCase):
         _mod.SHUTDOWN_REQUESTED = False
         _mod.PROCESS_REGISTRY.clear()
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod.signal, "signal")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_no_agents_skips_grace_period(self, mock_harvest, mock_spawn, mock_time, mock_sig):
+    def test_no_agents_skips_grace_period(self, mock_harvest, mock_spawn, mock_time, mock_sig, mock_recover):
         """When no agents are active, shutdown logs completion immediately."""
         mock_spawn.side_effect = lambda run_id_filter=None: (
             setattr(_mod, "SHUTDOWN_REQUESTED", True), 0
@@ -110,11 +112,12 @@ class TestGracefulShutdown(unittest.TestCase):
             self.assertTrue(any("Shutdown complete" in m for m in info_msgs))
             self.assertFalse(any("Waiting for" in m for m in info_msgs))
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod.signal, "signal")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest")
-    def test_grace_period_harvests_agents(self, mock_harvest, mock_spawn, mock_time, mock_sig):
+    def test_grace_period_harvests_agents(self, mock_harvest, mock_spawn, mock_time, mock_sig, mock_recover):
         """During grace period, harvest() is called to reap finishing agents."""
         mock_popen = MagicMock()
         # First harvest call in the main loop
@@ -144,11 +147,12 @@ class TestGracefulShutdown(unittest.TestCase):
         # harvest should have been called multiple times (main loop + grace period)
         self.assertGreaterEqual(harvest_call_count[0], 2)
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod.signal, "signal")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_grace_period_logs_agent_count(self, mock_harvest, mock_spawn, mock_time, mock_sig):
+    def test_grace_period_logs_agent_count(self, mock_harvest, mock_spawn, mock_time, mock_sig, mock_recover):
         """Grace period log message includes the number of active agents."""
         mock_popen = MagicMock()
 
@@ -171,11 +175,12 @@ class TestGracefulShutdown(unittest.TestCase):
             self.assertEqual(len(waiting_msgs), 1)
             self.assertIn("2", waiting_msgs[0])
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod.signal, "signal")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_kills_agents_after_grace_period(self, mock_harvest, mock_spawn, mock_time, mock_sig):
+    def test_kills_agents_after_grace_period(self, mock_harvest, mock_spawn, mock_time, mock_sig, mock_recover):
         """Agents still running after 120s grace period are killed."""
         mock_popen = MagicMock()
 
@@ -194,11 +199,12 @@ class TestGracefulShutdown(unittest.TestCase):
 
         mock_popen.kill.assert_called_once()
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod.signal, "signal")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest")
-    def test_final_harvest_after_kill(self, mock_harvest, mock_spawn, mock_time, mock_sig):
+    def test_final_harvest_after_kill(self, mock_harvest, mock_spawn, mock_time, mock_sig, mock_recover):
         """harvest() is called after killing remaining agents."""
         mock_popen = MagicMock()
         harvest_calls_after_kill = []
@@ -239,11 +245,12 @@ class TestGracefulShutdown(unittest.TestCase):
         # At least one harvest call happened after kill
         self.assertGreater(len(harvest_calls_after_kill), 0)
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod.signal, "signal")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_shutdown_complete_log(self, mock_harvest, mock_spawn, mock_time, mock_sig):
+    def test_shutdown_complete_log(self, mock_harvest, mock_spawn, mock_time, mock_sig, mock_recover):
         """Shutdown complete message is always logged."""
         mock_spawn.side_effect = lambda run_id_filter=None: (
             setattr(_mod, "SHUTDOWN_REQUESTED", True), 0
@@ -256,11 +263,12 @@ class TestGracefulShutdown(unittest.TestCase):
             info_msgs = [c[0][0] for c in mock_log.info.call_args_list]
             self.assertTrue(any("Shutdown complete" in m for m in info_msgs))
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod.signal, "signal")
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_grace_period_sleep_interval(self, mock_harvest, mock_spawn, mock_time, mock_sig):
+    def test_grace_period_sleep_interval(self, mock_harvest, mock_spawn, mock_time, mock_sig, mock_recover):
         """During grace period, sleeps are 5 seconds apart."""
         mock_popen = MagicMock()
 

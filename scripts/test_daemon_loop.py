@@ -50,10 +50,11 @@ class TestDaemonLoop(unittest.TestCase):
         PROCESS_REGISTRY.clear()
         _mod.SHUTDOWN_REQUESTED = False
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_calls_harvest_then_spawn(self, mock_harvest, mock_spawn, mock_time):
+    def test_calls_harvest_then_spawn(self, mock_harvest, mock_spawn, mock_time, mock_recover):
         """Verify harvest is called before spawn_pass each cycle."""
         call_order = []
         mock_harvest.side_effect = lambda: (call_order.append("harvest"), 0)[1]
@@ -68,10 +69,11 @@ class TestDaemonLoop(unittest.TestCase):
 
         self.assertEqual(call_order, ["harvest", "spawn"])
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_passes_run_id_filter_to_spawn(self, mock_harvest, mock_spawn, mock_time):
+    def test_passes_run_id_filter_to_spawn(self, mock_harvest, mock_spawn, mock_time, mock_recover):
         """spawn_pass receives the run_id_filter argument."""
         mock_spawn.side_effect = lambda run_id_filter=None: (
             setattr(_mod, "SHUTDOWN_REQUESTED", True),
@@ -83,10 +85,11 @@ class TestDaemonLoop(unittest.TestCase):
 
         mock_spawn.assert_called_once_with("test-run-123")
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_adaptive_interval_idle(self, mock_harvest, mock_spawn, mock_time):
+    def test_adaptive_interval_idle(self, mock_harvest, mock_spawn, mock_time, mock_recover):
         """When PROCESS_REGISTRY is empty, sleep intervals should total ~60s."""
         sleep_calls = []
 
@@ -103,10 +106,11 @@ class TestDaemonLoop(unittest.TestCase):
         total_sleep = sum(sleep_calls)
         self.assertEqual(total_sleep, 60)
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=1)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_adaptive_interval_active(self, mock_harvest, mock_spawn, mock_time):
+    def test_adaptive_interval_active(self, mock_harvest, mock_spawn, mock_time, mock_recover):
         """When PROCESS_REGISTRY is non-empty, sleep intervals should total ~10s."""
         def spawn_with_registry(*_args, **_kwargs):
             PROCESS_REGISTRY["step-1"] = {"popen": MagicMock(), "run_id": "r1"}
@@ -130,10 +134,11 @@ class TestDaemonLoop(unittest.TestCase):
         total_sleep = sum(sleep_calls)
         self.assertEqual(total_sleep, 10)
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_stops_on_shutdown_requested(self, mock_harvest, mock_spawn, mock_time):
+    def test_stops_on_shutdown_requested(self, mock_harvest, mock_spawn, mock_time, mock_recover):
         """Loop exits when SHUTDOWN_REQUESTED is set."""
         call_count = [0]
 
@@ -151,10 +156,11 @@ class TestDaemonLoop(unittest.TestCase):
         # harvest should have been called exactly twice
         self.assertEqual(call_count[0], 2)
 
+    @patch.object(_mod, "recover_orphaned_steps", return_value=0)
     @patch.object(_mod, "time")
     @patch.object(_mod, "spawn_pass", return_value=0)
     @patch.object(_mod, "harvest", return_value=0)
-    def test_logs_poll_cycle(self, mock_harvest, mock_spawn, mock_time):
+    def test_logs_poll_cycle(self, mock_harvest, mock_spawn, mock_time, mock_recover):
         """Verify poll cycle logs active/harvested/spawned counts."""
         mock_spawn.side_effect = lambda run_id_filter=None: (
             setattr(_mod, "SHUTDOWN_REQUESTED", True),

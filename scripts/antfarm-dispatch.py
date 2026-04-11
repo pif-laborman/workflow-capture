@@ -1433,12 +1433,49 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
     return dispatched
 
 
+# --- Startup recovery ---
+
+def recover_orphaned_steps() -> int:
+    """Reset steps left in 'running' status by a previous crashed dispatcher.
+
+    On daemon startup no agents from the previous instance are alive (systemd
+    kills the whole cgroup), so any step still marked 'running' is orphaned.
+    Loop steps preserve current_story_id so they resume the right story.
+    """
+    orphaned = sb_select("antfarm_steps", {"status": "eq.running", "select": "id,run_id,type,current_story_id"})
+    if not orphaned:
+        log.info("RECOVERY: no orphaned steps found")
+        return 0
+
+    for step in orphaned:
+        step_id = step["id"]
+        run_id = step.get("run_id", "unknown")
+        step_type = step.get("type", "")
+        log.info(f"RECOVERY: resetting orphaned step={step_id} run={run_id} to pending")
+
+        update_data: dict = {"status": "pending"}
+        if step_type == "loop":
+            # Preserve current_story_id so loop steps resume the right story
+            current_story = step.get("current_story_id")
+            if current_story:
+                update_data["current_story_id"] = current_story
+
+        sb_update("antfarm_steps", {"id": step_id}, update_data)
+
+    log.info(f"RECOVERY: reset {len(orphaned)} orphaned step(s) to pending")
+    return len(orphaned)
+
+
 # --- Daemon mode ---
 
 def daemon_loop(run_id_filter: str | None = None):
     """Long-running poll loop: harvest finished agents, spawn new ones, sleep adaptively."""
     global SHUTDOWN_REQUESTED
     log.info("Starting daemon mode")
+
+    recovered = recover_orphaned_steps()
+    if recovered:
+        log.info(f"Recovered {recovered} orphaned step(s) before entering poll loop")
 
     signal.signal(signal.SIGTERM, handle_sigterm)
 
