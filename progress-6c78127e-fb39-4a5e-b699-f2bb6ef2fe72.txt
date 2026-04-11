@@ -118,3 +118,14 @@ Started: 2026-04-11
 - Files changed: lib/hooks/useEventLog.ts, app/__tests__/event-log.test.ts
 - **Learnings:** useRef + useState version counter pattern works well for mutable arrays that need to trigger re-renders — the ref holds the data, the counter forces React to re-render when it changes.
 ---
+
+## 2026-04-11 - US-011: Observe loop client logic
+- Created lib/hooks/useObserveLoop.ts: hook that POSTs to /api/observe every 2s during recording, handles interjection responses with TTS + event log, pauses/resumes speech recognition during TTS
+- Takes options object with callbacks for getLatestFrame, getTranscriptWindow, speak, pauseRecognition, resumeRecognition, addInterjection — decoupled from concrete hook instances
+- Tracks observeCallCount (resets on recording restart), secondsSinceLastInterjection via ref, skips ticks when no frame available
+- Uses optionsRef pattern to avoid stale closures in interval callback
+- Graceful error handling: catch fetch errors, catch TTS errors, always resume recognition after TTS attempt
+- Wrote 13 tests: interval start/stop, correct POST body, skip on null frame, call count tracking, speak:true triggers TTS+pause+interjection+resume, speak:false no-op, fetch error handling, HTTP error handling, cleanup on stop, cleanup on unmount, TTS error still resumes recognition, count reset on restart
+- Files changed: lib/hooks/useObserveLoop.ts, app/__tests__/observe-loop.test.ts
+- **Learnings:** vi.useFakeTimers + act(async () => { vi.advanceTimersByTime(); await Promise.resolve() }) pattern needed to flush both timer callbacks and the async fetch promises they trigger. Multiple await Promise.resolve() calls may be needed to flush chained async operations.
+---
