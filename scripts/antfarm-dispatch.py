@@ -95,6 +95,7 @@ if sys.stderr.isatty():
 # Maps step_id -> {popen, run_id, agent_id, start_time, stdout_path, prompt_file,
 #                  workflow_id, agent_name, role, run, context}
 PROCESS_REGISTRY: dict = {}
+AGENT_TIMEOUT_SECONDS = 1200  # 20 minutes
 
 
 # --- Supabase helpers ---
@@ -485,6 +486,192 @@ def execute_agent_async(agent_name: str, role: str, prompt: str, repo: str,
             except OSError:
                 pass
         return None
+
+
+# --- Harvest completed processes ---
+
+def harvest() -> int:
+    """Poll process registry for finished agents and run completion logic.
+
+    Returns the number of harvested (finished or timed-out) processes.
+    """
+    harvested = 0
+    now = time.time()
+
+    # Iterate over a snapshot since we mutate the registry
+    for step_id, entry in list(PROCESS_REGISTRY.items()):
+        proc = entry["popen"]
+        returncode = proc.poll()
+        elapsed = now - entry["start_time"]
+
+        # Check for timeout
+        if returncode is None:
+            if elapsed > AGENT_TIMEOUT_SECONDS:
+                log.info(
+                    f"TIMEOUT step={step_id} agent={entry['agent_id']} "
+                    f"elapsed={elapsed:.0f}s — killing"
+                )
+                try:
+                    proc.kill()
+                    proc.wait(timeout=10)
+                except Exception as e:
+                    log.error(f"Failed to kill timed-out process for step={step_id}: {e}")
+
+                # Read any partial stdout
+                stdout_text = ""
+                try:
+                    with open(entry["stdout_path"], "r") as f:
+                        stdout_text = f.read()
+                except Exception:
+                    pass
+
+                error_msg = f"Agent timed out after {AGENT_TIMEOUT_SECONDS}s"
+                fail_result = antfarm_fail(step_id, error_msg)
+                log.info(
+                    f"HARVESTED step={step_id} agent={entry['agent_id']} "
+                    f"duration={elapsed:.0f}s status=timeout"
+                )
+
+                if fail_result.get("runFailed"):
+                    run = entry["run"]
+                    task = run.get("task", "unknown")
+                    notify(f"Antfarm run failed: {task}\n{error_msg}")
+                    log.info(f"RUN FAILED: {entry['run_id'][:8]} — {task}")
+                    context = entry.get("context") or {}
+                    cleanup_worktree(context)
+                    run_evaluator(entry["run_id"])
+
+                # Clean up temp files
+                for path in [entry.get("prompt_file"), entry.get("stdout_path")]:
+                    if path:
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+
+                del PROCESS_REGISTRY[step_id]
+                harvested += 1
+            continue  # Still running and not timed out
+
+        # Process finished — read stdout from temp file
+        duration = elapsed
+        stdout_text = ""
+        try:
+            with open(entry["stdout_path"], "r") as f:
+                stdout_text = f.read()
+        except Exception as e:
+            log.error(f"Failed to read stdout for step={step_id}: {e}")
+
+        parsed = parse_claude_json(stdout_text)
+
+        # Record token usage (best-effort)
+        record_token_usage(
+            parsed.get("usage", {}),
+            source="antfarm",
+            run_id=entry["run_id"],
+            step_id=step_id,
+            agent=entry["agent_name"],
+            workflow_id=entry["workflow_id"],
+            duration_seconds=duration,
+        )
+
+        run = entry["run"]
+        run_id = entry["run_id"]
+        agent_id = entry["agent_id"]
+        workflow_id = entry["workflow_id"]
+        context = entry.get("context") or {}
+
+        if returncode == 0:
+            # --- Success path ---
+            # Look up step_id and type from DB
+            step_rows = sb_select("antfarm_steps", {
+                "id": f"eq.{step_id}",
+                "select": "step_id,type",
+            })
+            wf_step_id = step_rows[0]["step_id"] if step_rows else ""
+            step_type = step_rows[0].get("type", "single") if step_rows else "single"
+            step_cfg = get_step_config(workflow_id, wf_step_id)
+
+            # Skip dispatcher retry logic for loop and verifyEach steps
+            is_loop_step = step_type == "loop"
+            is_verify_each_target = False
+            if not is_loop_step:
+                loop_steps = sb_select("antfarm_steps", {
+                    "run_id": f"eq.{run_id}",
+                    "type": "eq.loop",
+                    "select": "loop_config",
+                })
+                for ls in loop_steps:
+                    lc = ls.get("loop_config") or {}
+                    if isinstance(lc, str):
+                        lc = json.loads(lc)
+                    if lc.get("verifyEach") and lc.get("verifyStep") == wf_step_id:
+                        is_verify_each_target = True
+                        break
+
+            if not is_loop_step and not is_verify_each_target:
+                if handle_retry_step(run, step_id, step_cfg, parsed["text"]):
+                    log.info(
+                        f"HARVESTED step={step_id} agent={agent_id} "
+                        f"duration={duration:.0f}s status=retry"
+                    )
+                    # Clean up temp files
+                    for path in [entry.get("prompt_file"), entry.get("stdout_path")]:
+                        if path:
+                            try:
+                                os.unlink(path)
+                            except OSError:
+                                pass
+                    del PROCESS_REGISTRY[step_id]
+                    harvested += 1
+                    continue
+
+            completion = antfarm_complete(step_id, parsed["text"])
+            log.info(
+                f"HARVESTED step={step_id} agent={agent_id} "
+                f"duration={duration:.0f}s status=success"
+            )
+
+            if not completion.get("runCompleted"):
+                check_milestone(run_id, run.get("task", "unknown"))
+
+            if completion.get("runCompleted"):
+                task = run.get("task", "unknown")
+                if workflow_id == "content-factory":
+                    deliver_content_factory(run)
+                else:
+                    notify(f"Antfarm run completed: {task}")
+                log.info(f"RUN COMPLETED: {run_id[:8]} — {task}")
+                cleanup_worktree(context)
+                run_evaluator(run_id)
+        else:
+            # --- Failure path ---
+            err = (stdout_text or "unknown error")[:2000]
+            fail_result = antfarm_fail(step_id, err)
+            log.info(
+                f"HARVESTED step={step_id} agent={agent_id} "
+                f"duration={duration:.0f}s status=failed"
+            )
+
+            if fail_result.get("runFailed"):
+                task = run.get("task", "unknown")
+                notify(f"Antfarm run failed: {task}\n{err[:200]}")
+                log.info(f"RUN FAILED: {run_id[:8]} — {task}")
+                cleanup_worktree(context)
+                run_evaluator(run_id)
+
+        # Clean up temp files
+        for path in [entry.get("prompt_file"), entry.get("stdout_path")]:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        del PROCESS_REGISTRY[step_id]
+        harvested += 1
+
+    return harvested
 
 
 # --- Cross-step retry ---
