@@ -932,18 +932,43 @@ def dispatch_once(run_id_filter: str | None = None) -> int:
                 # Find which workflow step this DB step belongs to
                 step_rows = sb_select("antfarm_steps", {
                     "id": f"eq.{step_id}",
-                    "select": "step_id",
+                    "select": "step_id,type",
                 })
                 wf_step_id = step_rows[0]["step_id"] if step_rows else ""
+                step_type = step_rows[0].get("type", "single") if step_rows else "single"
                 step_cfg = get_step_config(workflow_id, wf_step_id)
 
-                if handle_retry_step(run, step_id, step_cfg, result["output"]):
-                    log.info(
-                        f"RETRY_STEP step={step_id} agent={agent_id} "
-                        f"duration={duration:.0f}s"
-                    )
-                    dispatched += 1
-                    continue
+                # Skip dispatcher retry logic for loop steps and their
+                # paired verify steps. Loop steps have their own completion
+                # semantics (per-story iteration, verifyEach) managed by
+                # antfarm's completeStep. The dispatcher's expects check
+                # doesn't understand that a loop step won't emit STATUS: done
+                # until all stories are finished.
+                is_loop_step = step_type == "loop"
+                is_verify_each_target = False
+                if not is_loop_step:
+                    # Check if this step is the verify target of a loop step
+                    loop_steps = sb_select("antfarm_steps", {
+                        "run_id": f"eq.{run_id}",
+                        "type": "eq.loop",
+                        "select": "loop_config",
+                    })
+                    for ls in loop_steps:
+                        lc = ls.get("loop_config") or {}
+                        if isinstance(lc, str):
+                            lc = json.loads(lc)
+                        if lc.get("verifyEach") and lc.get("verifyStep") == wf_step_id:
+                            is_verify_each_target = True
+                            break
+
+                if not is_loop_step and not is_verify_each_target:
+                    if handle_retry_step(run, step_id, step_cfg, result["output"]):
+                        log.info(
+                            f"RETRY_STEP step={step_id} agent={agent_id} "
+                            f"duration={duration:.0f}s"
+                        )
+                        dispatched += 1
+                        continue
 
                 completion = antfarm_complete(step_id, result["output"])
                 log.info(
