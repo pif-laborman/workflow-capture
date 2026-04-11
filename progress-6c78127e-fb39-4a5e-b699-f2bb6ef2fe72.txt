@@ -129,3 +129,15 @@ Started: 2026-04-11
 - Files changed: lib/hooks/useObserveLoop.ts, app/__tests__/observe-loop.test.ts
 - **Learnings:** vi.useFakeTimers + act(async () => { vi.advanceTimersByTime(); await Promise.resolve() }) pattern needed to flush both timer callbacks and the async fetch promises they trigger. Multiple await Promise.resolve() calls may be needed to flush chained async operations.
 ---
+
+## 2026-04-11 - US-012: Recording screen UI with live panels
+- Created components/RecordingScreen.tsx: props-driven component with top bar (pulsing rec dot, MM:SS timer, frame/observe/interjection counters), stop button, optional no-tab-audio warning banner, two-column CSS grid layout (1fr 1px 1fr) with transcript panel (left) and observer panel (right)
+- Transcript panel: Live pill badge, scrollable area with transcript blocks (timestamp + text, final vs interim styling), empty state hint
+- Observer panel: scrollable area with interjection cards (warm bg, timestamp, reason tag pill, DM Sans italic question text), empty state hint
+- Added recording screen CSS to globals.css: top bar, rec-dot pulse animation, metrics, warning banner, two-column grid, panel headers, pill badges, transcript blocks, interjection cards
+- Updated AppShell.tsx: renders RecordingScreen for RecordingActive state (with placeholder props — will be wired to real hooks in integration story)
+- Exported Interjection interface from RecordingScreen for reuse
+- Wrote 18 tests: top bar rendering (4 — rec dot/timer/metrics/timer increment/MM:SS format/metric counts), stop button (1 — click triggers onStop + navigates to Processing), warning banner (2 — shown/hidden based on hasTabAudio), two-column layout (2 — panels/Live badge), empty states (2 — transcript/observer hints), transcript blocks (4 — final blocks/interim text/hide hint with chunks/hide hint with interim), interjection cards (3 — cards with data/pill badge classes/hide hint)
+- Files changed: components/RecordingScreen.tsx, components/AppShell.tsx, app/globals.css, app/__tests__/recording-screen.test.tsx
+- **Learnings:** jsdom doesn't implement `scrollIntoView` — guard with `typeof el.scrollIntoView === 'function'` check to avoid test failures. RecordingScreen uses props interface rather than context for dynamic data (transcript, interjections, counts) — keeps the component testable and decoupled from hooks.
+---
