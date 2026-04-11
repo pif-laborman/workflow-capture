@@ -23,3 +23,15 @@ Started: 2026-04-11
 - Files changed: scripts/antfarm-dispatch.py, scripts/test_execute_agent_async.py, .gitignore
 - **Learnings:** Module import requires patching env vars for SUPABASE_URL/KEY before exec_module
 ---
+
+## 2026-04-11 - US-002: Harvest function for completed processes
+- Added `AGENT_TIMEOUT_SECONDS = 1200` constant
+- Added `harvest()` function that polls PROCESS_REGISTRY and runs completion logic
+- Success path: sb_select step info, loop/verifyEach skip logic, handle_retry_step, antfarm_complete, check_milestone, runCompleted handling (notify, content-factory delivery, worktree cleanup, evaluator)
+- Failure path: antfarm_fail, runFailed handling (notify, worktree cleanup, evaluator)
+- Timeout path: kill process after 1200s, treat as failure via antfarm_fail
+- Temp files (prompt_file, stdout_path) cleaned up after every harvest
+- Returns count of harvested processes
+- Files changed: scripts/antfarm-dispatch.py, scripts/test_harvest.py
+- **Learnings:** Use `list(PROCESS_REGISTRY.items())` to iterate a snapshot when mutating during iteration; mock module functions with `patch.object(_mod, "fn_name")` pattern
+---
