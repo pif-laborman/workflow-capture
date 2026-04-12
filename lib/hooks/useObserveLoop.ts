@@ -52,19 +52,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const frame = opts.getLatestFrame();
     if (!frame) return;
 
-    // Client-side cooldown only (server-side removed, unreliable on Vercel)
     const now = Date.now();
-    const msSinceLastInterjection = lastInterjectionTimeRef.current === 0
-      ? 999999
-      : now - lastInterjectionTimeRef.current;
-    // No fixed cooldown. Claude decides based on context (previous interjections + transcript).
-
-    // Track frame history (keep last N frames)
-    const history = frameHistoryRef.current;
-    history.push(frame);
-    if (history.length > FRAME_HISTORY_SIZE) {
-      history.shift();
-    }
 
     const transcriptWindow = opts.getTranscriptWindow(120);
 
@@ -74,6 +62,20 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       lastTranscriptChangeTimeRef.current = now;
     }
     const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
+
+    // Don't interrupt the user: only observe when they've paused for 3+ seconds
+    if (secondsSilent < 3) return;
+
+    const msSinceLastInterjection = lastInterjectionTimeRef.current === 0
+      ? 999999
+      : now - lastInterjectionTimeRef.current;
+
+    // Track frame history (keep last N frames)
+    const history = frameHistoryRef.current;
+    history.push(frame);
+    if (history.length > FRAME_HISTORY_SIZE) {
+      history.shift();
+    }
 
     const secondsSinceLastInterjection = lastInterjectionTimeRef.current === 0
       ? 9999
@@ -144,7 +146,9 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     inFlightRef.current = false;
     frameHistoryRef.current = [];
     lastTranscriptLengthRef.current = 0;
-    lastTranscriptChangeTimeRef.current = Date.now();
+    // Start with silence timer already past the gate so the first observe can fire
+    // (the intro TTS plays during this window anyway)
+    lastTranscriptChangeTimeRef.current = Date.now() - 10000;
 
     intervalRef.current = setInterval(() => {
       tick();

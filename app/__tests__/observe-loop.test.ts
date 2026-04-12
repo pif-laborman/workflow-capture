@@ -11,7 +11,7 @@ function createMockOptions(overrides: Partial<UseObserveLoopOptions> = {}): UseO
   return {
     isRecording: false,
     getLatestFrame: vi.fn(() => 'base64frame'),
-    getTranscriptWindow: vi.fn(() => 'hello world'),
+    getTranscriptWindow: vi.fn(() => ''),
     speak: vi.fn(() => Promise.resolve()),
     addInterjection: vi.fn(),
     getPreviousInterjections: vi.fn(() => []),
@@ -48,14 +48,14 @@ describe('useObserveLoop', () => {
 
     // First tick at 2s
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
     // Second tick at 4s
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
     });
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -68,16 +68,16 @@ describe('useObserveLoop', () => {
     });
     vi.stubGlobal('fetch', mockFetch);
 
+    // Use empty transcript so the silence gate passes immediately
     const options = createMockOptions({
       isRecording: true,
       getLatestFrame: vi.fn(() => 'testframe123'),
-      getTranscriptWindow: vi.fn(() => 'user said something'),
     });
 
     renderHook(() => useObserveLoop(options));
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
     });
 
@@ -89,7 +89,7 @@ describe('useObserveLoop', () => {
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.frame).toBe('testframe123');
-    expect(body.transcript_window).toBe('user said something');
+    expect(body.transcript_window).toBe('');
     expect(body.seconds_since_last_interjection).toBe(9999); // no prior interjection
   });
 
@@ -105,7 +105,7 @@ describe('useObserveLoop', () => {
     renderHook(() => useObserveLoop(options));
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
     });
 
@@ -125,7 +125,7 @@ describe('useObserveLoop', () => {
     expect(result.current.observeCallCount).toBe(0);
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -148,7 +148,7 @@ describe('useObserveLoop', () => {
     renderHook(() => useObserveLoop(options));
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       // Flush all microtasks
       await Promise.resolve();
       await Promise.resolve();
@@ -174,7 +174,7 @@ describe('useObserveLoop', () => {
     renderHook(() => useObserveLoop(options));
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -193,7 +193,7 @@ describe('useObserveLoop', () => {
 
     // Should not throw
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -214,7 +214,7 @@ describe('useObserveLoop', () => {
     const { result } = renderHook(() => useObserveLoop(options));
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -240,7 +240,7 @@ describe('useObserveLoop', () => {
 
     // One tick
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -268,7 +268,7 @@ describe('useObserveLoop', () => {
     const { unmount } = renderHook(() => useObserveLoop(options));
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -303,7 +303,7 @@ describe('useObserveLoop', () => {
     renderHook(() => useObserveLoop(options));
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -327,7 +327,7 @@ describe('useObserveLoop', () => {
     );
 
     await act(async () => {
-      vi.advanceTimersByTime(2000);
+      vi.advanceTimersByTime(1000);
       await Promise.resolve();
       await Promise.resolve();
     });

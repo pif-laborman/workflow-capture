@@ -135,8 +135,8 @@ describe('Type interfaces compile correctly', () => {
 });
 
 describe('Constants', () => {
-  it('OBSERVE_INTERVAL_MS is 2000', () => {
-    expect(OBSERVE_INTERVAL_MS).toBe(2000);
+  it('OBSERVE_INTERVAL_MS is 1000', () => {
+    expect(OBSERVE_INTERVAL_MS).toBe(1000);
   });
 
   it('COOLDOWN_MS is 10000', () => {
