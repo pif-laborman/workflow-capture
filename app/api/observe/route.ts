@@ -74,7 +74,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
   const client = new Anthropic({ apiKey });
 
   try {
-    const response = await client.messages.create({
+    // Use streaming to parse JSON as soon as it's complete (saves ~0.5-1s
+    // vs waiting for the full response including stop_reason)
+    let accumulated = '';
+    let earlyResult: ObserveResponse | null = null;
+
+    const stream = client.messages.stream({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 256,
       system: body.system_prompt || OBSERVE_SYSTEM_PROMPT,
@@ -89,14 +94,53 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
       ],
     });
 
-    // Extract text content from response
-    const textBlock = response.content.find((block) => block.type === 'text');
-    if (!textBlock || textBlock.type !== 'text') {
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        accumulated += event.delta.text;
+
+        // Try to parse early: check if we have a complete JSON object
+        // This lets us return as soon as the closing } arrives,
+        // without waiting for Claude to finish generating (stop token)
+        if (!earlyResult && accumulated.includes('}')) {
+          try {
+            let jsonStr = accumulated.trim();
+            const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (codeBlockMatch) {
+              jsonStr = codeBlockMatch[1].trim();
+            }
+            const parsed = JSON.parse(jsonStr) as ObserveResponse;
+            earlyResult = {
+              speak: !!parsed.speak,
+              message: parsed.message || '',
+              reason: parsed.reason || '',
+            };
+            // If speak is false, return immediately (no need to wait)
+            if (!earlyResult.speak) {
+              stream.abort();
+              return NextResponse.json(earlyResult);
+            }
+            // If speak is true and we have a message, return immediately
+            if (earlyResult.message) {
+              stream.abort();
+              return NextResponse.json(earlyResult);
+            }
+          } catch {
+            // JSON not complete yet, keep accumulating
+          }
+        }
+      }
+    }
+
+    // Fallback: parse whatever we accumulated
+    if (earlyResult) {
+      return NextResponse.json(earlyResult);
+    }
+
+    if (!accumulated.trim()) {
       return NextResponse.json(SILENT_RESPONSE);
     }
 
-    // Parse JSON from Claude's response (strip markdown code blocks if present)
-    let jsonStr = textBlock.text.trim();
+    let jsonStr = accumulated.trim();
     const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeBlockMatch) {
       jsonStr = codeBlockMatch[1].trim();

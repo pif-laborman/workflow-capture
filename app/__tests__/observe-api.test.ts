@@ -1,10 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const mockCreate = vi.fn();
+const mockStream = vi.fn();
+
+/** Helper: create a mock stream that yields text delta events then completes */
+function createMockStreamResult(text: string) {
+  const events = text.split('').map((char) => ({
+    type: 'content_block_delta' as const,
+    delta: { type: 'text_delta' as const, text: char },
+  }));
+
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      for (const event of events) {
+        yield event;
+      }
+    },
+    abort: vi.fn(),
+  };
+}
 
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
-    messages = { create: mockCreate };
+    messages = { stream: mockStream };
   }
   return { default: MockAnthropic };
 });
@@ -29,7 +46,7 @@ describe('/api/observe', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    mockCreate.mockReset();
+    mockStream.mockReset();
     process.env = { ...originalEnv, ANTHROPIC_API_KEY: 'test-key-123' };
   });
 
@@ -58,22 +75,19 @@ describe('/api/observe', () => {
       const req = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
       await POST(req);
 
-      expect(mockCreate).not.toHaveBeenCalled();
+      expect(mockStream).not.toHaveBeenCalled();
     });
   });
 
   describe('successful Claude call', () => {
     it('returns valid ObserveResponse when Claude speaks', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            speak: true,
-            message: 'Why did you toggle the "Dark mode" setting?',
-            reason: 'missing_why',
-          }),
-        }],
-      });
+      mockStream.mockReturnValueOnce(createMockStreamResult(
+        JSON.stringify({
+          speak: true,
+          message: 'Why did you toggle the "Dark mode" setting?',
+          reason: 'missing_why',
+        })
+      ));
 
       const req = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
       const res = await POST(req);
@@ -86,9 +100,9 @@ describe('/api/observe', () => {
     });
 
     it('returns valid ObserveResponse when Claude stays silent', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ speak: false, message: '', reason: 'none' }) }],
-      });
+      mockStream.mockReturnValueOnce(createMockStreamResult(
+        JSON.stringify({ speak: false, message: '', reason: 'none' })
+      ));
 
       const req = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
       const res = await POST(req);
@@ -101,15 +115,15 @@ describe('/api/observe', () => {
     });
 
     it('passes image and transcript to Claude correctly', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ speak: false, message: '', reason: 'none' }) }],
-      });
+      mockStream.mockReturnValueOnce(createMockStreamResult(
+        JSON.stringify({ speak: false, message: '', reason: 'none' })
+      ));
 
       const req = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
       await POST(req);
 
-      expect(mockCreate).toHaveBeenCalledOnce();
-      const callArgs = mockCreate.mock.calls[0][0];
+      expect(mockStream).toHaveBeenCalledOnce();
+      const callArgs = mockStream.mock.calls[0][0];
       expect(callArgs.model).toBe('claude-sonnet-4-20250514');
       expect(callArgs.messages[0].content[0].type).toBe('image');
       expect(callArgs.messages[0].content[0].source.data).toBe(validBody.frame);
@@ -134,7 +148,7 @@ describe('/api/observe', () => {
     });
 
     it('returns speak: false when Claude API call fails', async () => {
-      mockCreate.mockRejectedValueOnce(new Error('API error'));
+      mockStream.mockImplementationOnce(() => { throw new Error('API error'); });
 
       const req = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
       const res = await POST(req);
@@ -145,9 +159,7 @@ describe('/api/observe', () => {
     });
 
     it('returns speak: false when Claude returns unparseable response', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: 'not valid json' }],
-      });
+      mockStream.mockReturnValueOnce(createMockStreamResult('not valid json'));
 
       const req = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
       const res = await POST(req);
