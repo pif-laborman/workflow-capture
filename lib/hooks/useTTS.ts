@@ -50,8 +50,9 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         });
 
         if (!res.ok || controller.signal.aborted) {
-          // Fall back to browser TTS on API failure
-          fallbackSpeak(text, optionsRef, setIsSpeaking, resolve);
+          // Voxtral failed; skip this interjection silently
+          console.warn('TTS: Voxtral API returned', res.status, '- skipping interjection');
+          resolve();
           return;
         }
 
@@ -79,6 +80,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         };
 
         audio.onerror = () => {
+          console.warn('TTS: audio playback error - skipping interjection');
           setIsSpeaking(false);
           optionsRef.current.onSpeakEnd?.();
           URL.revokeObjectURL(url);
@@ -87,14 +89,16 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         };
 
         audio.play().catch(() => {
-          // Autoplay blocked or error; fall back to browser TTS
+          // Autoplay blocked or playback error; skip gracefully
+          console.warn('TTS: autoplay blocked - skipping interjection');
           URL.revokeObjectURL(url);
           audioRef.current = null;
-          fallbackSpeak(text, optionsRef, setIsSpeaking, resolve);
+          resolve();
         });
       } catch {
-        // Network error or abort; fall back to browser TTS
-        fallbackSpeak(text, optionsRef, setIsSpeaking, resolve);
+        // Network error or abort; skip gracefully
+        console.warn('TTS: network error - skipping interjection');
+        resolve();
       }
     });
   }, [cancel]);
@@ -109,37 +113,3 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
   return { speak, isSpeaking, cancel };
 }
 
-/** Browser SpeechSynthesis fallback when Voxtral is unavailable */
-function fallbackSpeak(
-  text: string,
-  optionsRef: React.RefObject<UseTTSOptions>,
-  setIsSpeaking: (v: boolean) => void,
-  resolve: () => void,
-): void {
-  if (typeof window === 'undefined' || !window.speechSynthesis) {
-    resolve();
-    return;
-  }
-
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-
-  utterance.onstart = () => {
-    setIsSpeaking(true);
-    optionsRef.current?.onSpeakStart?.();
-  };
-
-  utterance.onend = () => {
-    setIsSpeaking(false);
-    optionsRef.current?.onSpeakEnd?.();
-    resolve();
-  };
-
-  utterance.onerror = () => {
-    setIsSpeaking(false);
-    optionsRef.current?.onSpeakEnd?.();
-    resolve();
-  };
-
-  window.speechSynthesis.speak(utterance);
-}
