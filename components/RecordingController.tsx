@@ -14,6 +14,31 @@ import type { Interjection, CapturedFrame } from './RecordingScreen';
 import type { InterjectionPayload, FramePayload } from '@/lib/hooks/useEventLog';
 import { EventType } from '@/lib/types';
 
+const COUNTDOWN_HINTS: Record<number, string> = {
+  3: 'Switch to the tab you want to record',
+  2: 'Start talking when you see the red dot',
+  1: 'Say what you do and why as you go',
+};
+
+/** Short beep via Web Audio API. Final tick is higher pitch. */
+function playCountdownBeep(isFinal: boolean) {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = isFinal ? 880 : 660;
+    gain.gain.value = 0.15;
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    osc.stop(ctx.currentTime + 0.15);
+    setTimeout(() => ctx.close(), 300);
+  } catch {
+    // Audio context unavailable; skip beep
+  }
+}
+
 export default function RecordingController() {
   const { currentState, setState, sessionData, setSessionData } = useAppState();
   const startedRef = useRef(false);
@@ -113,19 +138,16 @@ export default function RecordingController() {
       try {
         await mediaCapture.startCapture();
 
-        // 3-second countdown to let user switch to target tab
+        // 3-second countdown with beep and guidance text
         for (let i = 3; i >= 1; i--) {
           setCountdown(i);
+          playCountdownBeep(i === 1);
           await new Promise((r) => setTimeout(r, 1000));
         }
         setCountdown(null);
 
-        // Intro message: set expectations before the user starts
+        // Go straight to recording; no spoken intro
         setState(AppState.RecordingActive);
-        const introMessage = "I'm watching your screen now. Walk me through what you're about to do, step by step. Tell me what you're clicking and why. I'll jump in if something isn't clear.";
-        eventLog.addInterjection(introMessage, 'intro', Date.now());
-        await tts.speak(introMessage);
-
         speechRecognition.start(mediaCapture.micStream || undefined);
       } catch {
         // If capture fails, go back to NewCapture
@@ -163,7 +185,7 @@ export default function RecordingController() {
       <div className="countdown-overlay" data-testid="countdown-overlay">
         <div className="countdown-content">
           <div className="countdown-number" data-testid="countdown-number">{countdown}</div>
-          <p className="countdown-hint">Switch to the tab you want to record</p>
+          <p className="countdown-hint">{COUNTDOWN_HINTS[countdown] ?? ''}</p>
         </div>
       </div>
     );
