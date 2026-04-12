@@ -66,6 +66,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
     contextParts.push(`\nYou are seeing ${body.previous_frames.length + 1} screenshots in chronological order. The FIRST image is what the screen looked like when the user stopped talking. The LAST image is the current screen. Compare them to understand what happened during the silence.`);
   }
 
+  if (body.user_asked_directly) {
+    contextParts.push(`\nIMPORTANT: The user just asked YOU a direct question. Read the end of the transcript carefully and RESPOND to their question. You MUST set speak: true and answer what they asked. Do not analyze the screen; respond to the user conversationally.`);
+  }
+
   // Call Claude Sonnet
   const client = new Anthropic({ apiKey });
 

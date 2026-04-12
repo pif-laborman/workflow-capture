@@ -6,6 +6,22 @@ import { ObserveRequest, ObserveResponse } from '@/lib/types';
 import { getObservePrompt } from '@/lib/storage';
 
 const FRAME_HISTORY_SIZE = 3;
+const SILENCE_GATE_SECONDS = 2;
+
+/** Patterns that indicate the user is talking directly to Claude */
+const DIRECT_QUESTION_PATTERNS = [
+  /any\s*questions/i,
+  /do\s*you\s*(have|see|notice|think)/i,
+  /what\s*do\s*you\s*think/i,
+  /does\s*that\s*make\s*sense/i,
+  /anything\s*(else|unclear|you\s*want)/i,
+  /is\s*that\s*clear/i,
+  /can\s*you\s*(see|tell|explain)/i,
+  /your\s*thoughts/i,
+  /claude/i,
+  /what\s*should\s*i/i,
+  /am\s*i\s*missing/i,
+];
 
 export interface UseObserveLoopOptions {
   /** Whether recording is currently active */
@@ -64,12 +80,16 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       lastTranscriptLengthRef.current = transcriptWindow.length;
       lastTranscriptChangeTimeRef.current = now;
       wasUserSpeakingRef.current = true;
-      silenceStartFrameRef.current = null; // reset; will capture on next silent tick
+      silenceStartFrameRef.current = null;
     }
     const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
 
-    // Don't interrupt the user: only observe when they've paused for 3+ seconds
-    if (secondsSilent < 3) return;
+    // Check if the user just asked Claude a direct question (bypass silence gate)
+    const lastChunk = transcriptWindow.slice(-200); // check last ~200 chars
+    const userAskedDirectly = DIRECT_QUESTION_PATTERNS.some((p) => p.test(lastChunk));
+
+    // Don't interrupt unless: user paused for 2+ seconds OR asked a direct question
+    if (secondsSilent < SILENCE_GATE_SECONDS && !userAskedDirectly) return;
 
     // Capture the frame at the moment silence began (first tick after speech stops)
     if (wasUserSpeakingRef.current && !silenceStartFrameRef.current) {
@@ -112,6 +132,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       seconds_silent: secondsSilent,
       previous_interjections: opts.getPreviousInterjections(),
       ...(customPrompt ? { system_prompt: customPrompt } : {}),
+      ...(userAskedDirectly ? { user_asked_directly: true } : {}),
     };
 
     inFlightRef.current = true;

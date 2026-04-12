@@ -33,6 +33,7 @@ export interface ObserveRequest {
   seconds_silent?: number;
   previous_interjections: string[];
   system_prompt?: string;
+  user_asked_directly?: boolean;
 }
 
 export interface ObserveResponse {
