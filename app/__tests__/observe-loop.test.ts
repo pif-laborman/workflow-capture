@@ -13,8 +13,6 @@ function createMockOptions(overrides: Partial<UseObserveLoopOptions> = {}): UseO
     getLatestFrame: vi.fn(() => 'base64frame'),
     getTranscriptWindow: vi.fn(() => 'hello world'),
     speak: vi.fn(() => Promise.resolve()),
-    pauseRecognition: vi.fn(),
-    resumeRecognition: vi.fn(),
     addInterjection: vi.fn(),
     getPreviousInterjections: vi.fn(() => []),
     ...overrides,
@@ -162,9 +160,7 @@ describe('useObserveLoop', () => {
       'missing_why',
       expect.any(Number)
     );
-    expect(options.pauseRecognition).toHaveBeenCalled();
     expect(options.speak).toHaveBeenCalledWith('Can you explain why you clicked that?');
-    expect(options.resumeRecognition).toHaveBeenCalled();
   });
 
   it('does not trigger TTS or add interjection on speak:false', async () => {
@@ -184,7 +180,6 @@ describe('useObserveLoop', () => {
     });
 
     expect(options.speak).not.toHaveBeenCalled();
-    expect(options.pauseRecognition).not.toHaveBeenCalled();
     expect(options.addInterjection).not.toHaveBeenCalled();
   });
 
@@ -315,8 +310,6 @@ describe('useObserveLoop', () => {
     });
 
     // Recognition should still be resumed even after TTS failure
-    expect(options.pauseRecognition).toHaveBeenCalled();
-    expect(options.resumeRecognition).toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 

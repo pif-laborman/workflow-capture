@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { OBSERVE_INTERVAL_MS, COOLDOWN_MS } from '@/lib/constants';
+import { OBSERVE_INTERVAL_MS } from '@/lib/constants';
 import { ObserveRequest, ObserveResponse } from '@/lib/types';
 import { getObservePrompt } from '@/lib/storage';
 
@@ -16,10 +16,6 @@ export interface UseObserveLoopOptions {
   getTranscriptWindow: (lastNSeconds: number) => string;
   /** TTS speak function - returns promise that resolves when speech ends */
   speak: (text: string) => Promise<void>;
-  /** Pause speech recognition during TTS */
-  pauseRecognition: () => void;
-  /** Resume speech recognition after TTS */
-  resumeRecognition: () => void;
   /** Add interjection to event log */
   addInterjection: (message: string, reason: string, timestamp_ms: number) => void;
   /** Get all previous interjection messages */
@@ -61,9 +57,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const msSinceLastInterjection = lastInterjectionTimeRef.current === 0
       ? 999999
       : now - lastInterjectionTimeRef.current;
-    if (lastInterjectionTimeRef.current > 0 && msSinceLastInterjection < COOLDOWN_MS) {
-      return;
-    }
+    // No fixed cooldown. Claude decides based on context (previous interjections + transcript).
 
     // Track frame history (keep last N frames)
     const history = frameHistoryRef.current;
@@ -117,13 +111,12 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
         setSpeakCount((c) => c + 1);
         lastInterjectionTimeRef.current = Date.now();
         opts.addInterjection(data.message, data.reason, Date.now());
-        opts.pauseRecognition();
+        // Speak without muting mic (user can interrupt via transcript detection)
         try {
           await opts.speak(data.message);
         } catch (err) {
           console.error('TTS error during interjection:', err);
         }
-        opts.resumeRecognition();
       } else {
         setSilentCount((c) => c + 1);
       }

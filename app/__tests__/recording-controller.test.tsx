@@ -300,29 +300,6 @@ describe('RecordingController', () => {
     });
   });
 
-  describe('TTS-mic integration', () => {
-    it('wires TTS onSpeakStart to pause recognition', async () => {
-      await act(async () => {
-        renderWithState(AppState.RecordingActive);
-      });
-
-      // The TTS hook receives options with onSpeakStart
-      expect(capturedTTSOptions.onSpeakStart).toBeDefined();
-      capturedTTSOptions.onSpeakStart!();
-      expect(mockRecognitionPause).toHaveBeenCalled();
-    });
-
-    it('wires TTS onSpeakEnd to resume recognition', async () => {
-      await act(async () => {
-        renderWithState(AppState.RecordingActive);
-      });
-
-      expect(capturedTTSOptions.onSpeakEnd).toBeDefined();
-      capturedTTSOptions.onSpeakEnd!();
-      expect(mockRecognitionResume).toHaveBeenCalled();
-    });
-  });
-
   describe('Renders for RecordingScreen', () => {
     it('renders mock recording screen', async () => {
       await act(async () => {

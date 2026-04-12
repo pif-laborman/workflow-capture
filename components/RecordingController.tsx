@@ -22,11 +22,18 @@ export default function RecordingController() {
   // Core hooks
   const mediaCapture = useMediaCapture();
   const speechRecognition = useSpeechRecognition();
-  const tts = useTTS({
-    onSpeakStart: () => speechRecognition.pause(),
-    onSpeakEnd: () => speechRecognition.resume(),
-  });
+  const tts = useTTS();
   const eventLog = useEventLog();
+
+  // Interrupt: cancel TTS when user starts speaking
+  const prevChunkCountRef = useRef(0);
+  useEffect(() => {
+    const currentCount = speechRecognition.transcriptChunks.length;
+    if (currentCount > prevChunkCountRef.current && tts.isSpeaking) {
+      tts.cancel();
+    }
+    prevChunkCountRef.current = currentCount;
+  }, [speechRecognition.transcriptChunks.length, tts]);
 
   // Frame sampler — wired to event log
   const { latestFrame } = useFrameSampler(
@@ -51,8 +58,6 @@ export default function RecordingController() {
     getLatestFrame,
     getTranscriptWindow: eventLog.getTranscriptWindow,
     speak: tts.speak,
-    pauseRecognition: speechRecognition.pause,
-    resumeRecognition: speechRecognition.resume,
     addInterjection: eventLog.addInterjection,
     getPreviousInterjections: eventLog.getPreviousInterjections,
   });
