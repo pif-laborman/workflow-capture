@@ -138,8 +138,8 @@ describe('Constants', () => {
     expect(OBSERVE_INTERVAL_MS).toBe(2000);
   });
 
-  it('COOLDOWN_MS is 20000', () => {
-    expect(COOLDOWN_MS).toBe(20000);
+  it('COOLDOWN_MS is 5000', () => {
+    expect(COOLDOWN_MS).toBe(5000);
   });
 
   it('FRAME_INTERVAL_MS is 1000', () => {
@@ -176,9 +176,9 @@ describe('Observe system prompt', () => {
     expect(OBSERVE_SYSTEM_PROMPT).toContain('"reason"');
   });
 
-  it('requires one-sentence messages referencing on-screen elements', () => {
+  it('requires one-sentence messages referencing visible screen content', () => {
     expect(OBSERVE_SYSTEM_PROMPT).toContain('ONE sentence');
-    expect(OBSERVE_SYSTEM_PROMPT).toContain('on-screen element');
+    expect(OBSERVE_SYSTEM_PROMPT).toContain('visible on screen');
   });
 });
 

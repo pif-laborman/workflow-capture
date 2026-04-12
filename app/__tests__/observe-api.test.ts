@@ -66,8 +66,8 @@ describe('/api/observe', () => {
   });
 
   describe('cooldown enforcement', () => {
-    it('returns cooldown when client reports seconds_since_last_interjection < 20', async () => {
-      const body = { ...validBody, seconds_since_last_interjection: 10 };
+    it('returns cooldown when client reports seconds_since_last_interjection < 5', async () => {
+      const body = { ...validBody, seconds_since_last_interjection: 3 };
       const req = makeRequest(body) as unknown as Parameters<typeof POST>[0];
       const res = await POST(req);
       const data = await res.json();
