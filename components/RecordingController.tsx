@@ -121,6 +121,7 @@ export default function RecordingController() {
       interjections={interjections}
       framesCaptured={framesCaptured}
       observeCallCount={observeCallCount}
+      latestFrame={latestFrame}
       onStop={handleStop}
     />
   );

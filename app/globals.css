@@ -595,6 +595,21 @@ a {
   text-align: center;
 }
 
+/* Frame thumbnail */
+
+.frame-thumbnail {
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.frame-thumbnail img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* Transcript blocks */
 
 .transcript-block {

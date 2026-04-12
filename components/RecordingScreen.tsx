@@ -17,6 +17,7 @@ export interface RecordingScreenProps {
   interjections: Interjection[];
   framesCaptured: number;
   observeCallCount: number;
+  latestFrame: string | null;
   onStop: () => void;
 }
 
@@ -40,6 +41,7 @@ export default function RecordingScreen({
   interjections,
   framesCaptured,
   observeCallCount,
+  latestFrame,
   onStop,
 }: RecordingScreenProps) {
   const { setState } = useAppState();
@@ -122,6 +124,14 @@ export default function RecordingScreen({
             <span className="pill-badge pill-live" data-testid="live-badge">Live</span>
           </div>
           <div className="panel-scroll" data-testid="transcript-scroll">
+            {latestFrame && (
+              <div className="frame-thumbnail" data-testid="frame-thumbnail">
+                <img
+                  src={`data:image/jpeg;base64,${latestFrame}`}
+                  alt="Latest screen capture"
+                />
+              </div>
+            )}
             {transcriptChunks.length === 0 && !interimText ? (
               <p className="panel-empty-hint" data-testid="transcript-empty-hint">
                 Start working and talk through what you&apos;re doing
