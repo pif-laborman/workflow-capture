@@ -86,6 +86,7 @@ describe('useMediaCapture', () => {
       video: { displaySurface: 'monitor' },
       audio: true,
       preferCurrentTab: false,
+      selfBrowserSurface: 'exclude',
       systemAudio: 'include',
     });
     expect(mockGetUserMedia).toHaveBeenCalledWith({ audio: true });

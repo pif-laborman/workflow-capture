@@ -45,11 +45,13 @@ export function useMediaCapture(): UseMediaCaptureReturn {
       const screen = await navigator.mediaDevices.getDisplayMedia({
         video: { displaySurface: 'monitor' },
         audio: true,
-        // @ts-expect-error preferCurrentTab is not in TS types yet
+        // @ts-expect-error not in TS types yet
         preferCurrentTab: false,
-        // @ts-expect-error systemAudio is not in TS types yet
+        // @ts-expect-error not in TS types yet
+        selfBrowserSurface: 'exclude',
+        // @ts-expect-error not in TS types yet
         systemAudio: 'include',
-      });
+      } as DisplayMediaStreamOptions);
 
       // Reject if user picked a tab or window instead of entire screen
       const videoTrack = screen.getVideoTracks()[0];
