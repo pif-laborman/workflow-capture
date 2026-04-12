@@ -110,15 +110,14 @@ export default function PromptEditor({ onClose }: PromptEditorProps) {
             <span className="prompt-meta-item">{charCount} chars</span>
           </div>
           <div className="prompt-actions">
-            {isCustom && (
-              <button
-                className="btn-outline"
-                onClick={handleReset}
-                data-testid="prompt-reset"
-              >
-                Reset to default
-              </button>
-            )}
+            <button
+              className="btn-outline"
+              onClick={handleReset}
+              disabled={!isCustom}
+              data-testid="prompt-reset"
+            >
+              Reset to default
+            </button>
             <button
               className="btn-primary"
               onClick={handleSave}
