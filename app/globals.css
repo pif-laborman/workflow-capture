@@ -442,6 +442,45 @@ a {
    Recording Screen
    ========================================================================== */
 
+/* Countdown overlay */
+
+.countdown-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.countdown-content {
+  text-align: center;
+}
+
+.countdown-number {
+  font-family: var(--font-heading);
+  font-size: 8rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+  animation: countdown-pulse 1s ease-in-out infinite;
+}
+
+.countdown-hint {
+  font-family: var(--font-body);
+  font-size: var(--text-lg);
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: var(--space-4);
+}
+
+@keyframes countdown-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
+}
+
+/* Recording screen */
+
 .recording-screen {
   height: 100vh;
   display: flex;

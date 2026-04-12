@@ -135,6 +135,7 @@ function renderWithState(state: AppState, sessionData?: Partial<SessionData>) {
 
 describe('RecordingController', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.clearAllMocks();
     mockMediaCapture.isCapturing = false;
     mockMediaCapture.screenStream = null;
@@ -149,6 +150,7 @@ describe('RecordingController', () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   describe('Initialization (RecordingStart)', () => {
@@ -158,12 +160,23 @@ describe('RecordingController', () => {
       });
 
       expect(mockStartCapture).toHaveBeenCalledTimes(1);
+
+      // Advance past 3-second countdown
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
       expect(mockRecognitionStart).toHaveBeenCalledTimes(1);
     });
 
     it('transitions to RecordingActive after successful capture start', async () => {
       const { setState } = await act(async () => {
         return renderWithState(AppState.RecordingStart);
+      });
+
+      // Advance past 3-second countdown
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
       });
 
       expect(setState).toHaveBeenCalledWith(AppState.RecordingActive);

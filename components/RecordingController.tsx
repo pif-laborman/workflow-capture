@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { AppState } from '@/lib/types';
 import { useAppState } from '@/lib/state';
 import { useMediaCapture } from '@/lib/hooks/useMediaCapture';
@@ -17,6 +17,7 @@ import { EventType } from '@/lib/types';
 export default function RecordingController() {
   const { currentState, setState, sessionData, setSessionData } = useAppState();
   const startedRef = useRef(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
 
   // Core hooks
   const mediaCapture = useMediaCapture();
@@ -92,11 +93,20 @@ export default function RecordingController() {
     async function initCapture() {
       try {
         await mediaCapture.startCapture();
+
+        // 3-second countdown to let user switch to target tab
+        for (let i = 3; i >= 1; i--) {
+          setCountdown(i);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        setCountdown(null);
+
         speechRecognition.start(mediaCapture.micStream || undefined);
         setState(AppState.RecordingActive);
       } catch {
         // If capture fails, go back to NewCapture
         startedRef.current = false;
+        setCountdown(null);
         setState(AppState.NewCapture);
       }
     }
@@ -122,6 +132,18 @@ export default function RecordingController() {
     // RecordingScreen's handleStop calls setState(Processing) so we don't do it here
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaCapture, speechRecognition, tts, eventLog, sessionData, setSessionData]);
+
+  // Countdown overlay while user switches to target tab
+  if (countdown !== null) {
+    return (
+      <div className="countdown-overlay" data-testid="countdown-overlay">
+        <div className="countdown-content">
+          <div className="countdown-number" data-testid="countdown-number">{countdown}</div>
+          <p className="countdown-hint">Switch to the tab you want to record</p>
+        </div>
+      </div>
+    );
+  }
 
   // Show recording screen (for both start and active states)
   return (

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useAppState } from '@/lib/state';
-import { AppState, WorkflowDocument, WorkflowStep } from '@/lib/types';
+import { AppState, EventType, WorkflowDocument, WorkflowStep } from '@/lib/types';
 import { saveWorkflow as persistWorkflow, getWorkflow as loadWorkflow } from '@/lib/storage';
 
 function formatDuration(ms: number): string {
@@ -110,16 +110,26 @@ export default function ResultsScreen() {
   }
 
   // Save to localStorage on first render of a new workflow (not viewing a saved one)
+  // Strip base64 frame data to stay within localStorage's 5MB limit
   const doSave = useCallback(() => {
     if (!workflow || selectedWorkflowId) return;
     try {
+      const lightEvents = sessionEvents.map((e) => {
+        if (e.type === EventType.Frame) {
+          return {
+            ...e,
+            payload: { frame_captured: true, timestamp_ms: e.timestamp_ms },
+          };
+        }
+        return e;
+      });
       persistWorkflow({
         id: crypto.randomUUID(),
         name: workflowName || workflow.name,
         date: new Date().toISOString(),
         duration_ms: durationMs,
         workflow,
-        session_events: sessionEvents,
+        session_events: lightEvents,
       });
     } catch {
       // Ignore storage errors
