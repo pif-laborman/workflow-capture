@@ -10,8 +10,8 @@ import { useTTS } from '@/lib/hooks/useTTS';
 import { useEventLog } from '@/lib/hooks/useEventLog';
 import { useObserveLoop } from '@/lib/hooks/useObserveLoop';
 import RecordingScreen from './RecordingScreen';
-import type { Interjection } from './RecordingScreen';
-import type { InterjectionPayload } from '@/lib/hooks/useEventLog';
+import type { Interjection, CapturedFrame } from './RecordingScreen';
+import type { InterjectionPayload, FramePayload } from '@/lib/hooks/useEventLog';
 import { EventType } from '@/lib/types';
 
 export default function RecordingController() {
@@ -59,6 +59,17 @@ export default function RecordingController() {
   const framesCaptured = eventLog.events.filter(
     (e) => e.type === EventType.Frame
   ).length;
+
+  // Build captured frames array for feed
+  const capturedFrames: CapturedFrame[] = eventLog.events
+    .filter((e) => e.type === EventType.Frame)
+    .map((e) => {
+      const p = e.payload as FramePayload;
+      return {
+        timestamp_ms: e.timestamp_ms,
+        base64: p.frame_base64,
+      };
+    });
 
   // Build interjections array for UI
   const interjections: Interjection[] = eventLog.events
@@ -121,7 +132,7 @@ export default function RecordingController() {
       interjections={interjections}
       framesCaptured={framesCaptured}
       observeCallCount={observeCallCount}
-      latestFrame={latestFrame}
+      capturedFrames={capturedFrames}
       onStop={handleStop}
     />
   );

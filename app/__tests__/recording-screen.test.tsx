@@ -28,7 +28,7 @@ function renderWithContext(
     interjections: [],
     framesCaptured: 0,
     observeCallCount: 0,
-    latestFrame: null,
+    capturedFrames: [],
     onStop: vi.fn(),
     ...props,
   };

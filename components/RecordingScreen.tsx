@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import { AppState, TranscriptChunk } from '@/lib/types';
 import { useAppState } from '@/lib/state';
 
@@ -10,6 +10,15 @@ export interface Interjection {
   message: string;
 }
 
+export interface CapturedFrame {
+  timestamp_ms: number;
+  base64: string;
+}
+
+type FeedItem =
+  | { kind: 'frame'; timestamp_ms: number; base64: string }
+  | { kind: 'transcript'; timestamp_ms: number; text: string; isFinal: boolean };
+
 export interface RecordingScreenProps {
   hasTabAudio: boolean;
   transcriptChunks: TranscriptChunk[];
@@ -17,7 +26,7 @@ export interface RecordingScreenProps {
   interjections: Interjection[];
   framesCaptured: number;
   observeCallCount: number;
-  latestFrame: string | null;
+  capturedFrames: CapturedFrame[];
   onStop: () => void;
 }
 
@@ -41,13 +50,38 @@ export default function RecordingScreen({
   interjections,
   framesCaptured,
   observeCallCount,
-  latestFrame,
+  capturedFrames,
   onStop,
 }: RecordingScreenProps) {
   const { setState } = useAppState();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const feedEndRef = useRef<HTMLDivElement>(null);
   const observerEndRef = useRef<HTMLDivElement>(null);
+
+  // Build unified feed sorted by timestamp
+  const feedItems = useMemo<FeedItem[]>(() => {
+    const items: FeedItem[] = [];
+
+    for (const frame of capturedFrames) {
+      items.push({
+        kind: 'frame',
+        timestamp_ms: frame.timestamp_ms,
+        base64: frame.base64,
+      });
+    }
+
+    for (const chunk of transcriptChunks) {
+      items.push({
+        kind: 'transcript',
+        timestamp_ms: chunk.timestamp_ms,
+        text: chunk.text,
+        isFinal: chunk.isFinal,
+      });
+    }
+
+    items.sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+    return items;
+  }, [capturedFrames, transcriptChunks]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -57,10 +91,10 @@ export default function RecordingScreen({
   }, []);
 
   useEffect(() => {
-    if (transcriptEndRef.current && typeof transcriptEndRef.current.scrollIntoView === 'function') {
-      transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (feedEndRef.current && typeof feedEndRef.current.scrollIntoView === 'function') {
+      feedEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [transcriptChunks, interimText]);
+  }, [feedItems, interimText]);
 
   useEffect(() => {
     if (observerEndRef.current && typeof observerEndRef.current.scrollIntoView === 'function') {
@@ -72,6 +106,8 @@ export default function RecordingScreen({
     onStop();
     setState(AppState.Processing);
   }
+
+  const hasFeedContent = feedItems.length > 0 || interimText;
 
   return (
     <div data-testid="recording-screen" className="recording-screen">
@@ -117,39 +153,52 @@ export default function RecordingScreen({
 
       {/* Two-column layout */}
       <div className="recording-columns">
-        {/* Left: Transcript */}
+        {/* Left: Feed (frames + transcript merged) */}
         <div className="recording-panel" data-testid="transcript-panel">
           <div className="panel-header">
-            <h2 className="panel-heading">Transcript</h2>
+            <h2 className="panel-heading">Feed</h2>
             <span className="pill-badge pill-live" data-testid="live-badge">Live</span>
           </div>
           <div className="panel-scroll" data-testid="transcript-scroll">
-            {latestFrame && (
-              <div className="frame-thumbnail" data-testid="frame-thumbnail">
-                <img
-                  src={`data:image/jpeg;base64,${latestFrame}`}
-                  alt="Latest screen capture"
-                />
-              </div>
-            )}
-            {transcriptChunks.length === 0 && !interimText ? (
+            {!hasFeedContent ? (
               <p className="panel-empty-hint" data-testid="transcript-empty-hint">
                 Start working and talk through what you&apos;re doing
               </p>
             ) : (
               <>
-                {transcriptChunks.map((chunk, i) => (
-                  <div
-                    key={i}
-                    className={`transcript-block ${chunk.isFinal ? 'transcript-final' : 'transcript-interim'}`}
-                    data-testid="transcript-block"
-                  >
-                    <span className="transcript-timestamp">
-                      {formatTimestamp(chunk.timestamp_ms)}
-                    </span>
-                    <span className="transcript-text">{chunk.text}</span>
-                  </div>
-                ))}
+                {feedItems.map((item, i) => {
+                  if (item.kind === 'frame') {
+                    return (
+                      <div
+                        key={`f-${i}`}
+                        className="feed-frame"
+                        data-testid="feed-frame"
+                      >
+                        <span className="transcript-timestamp">
+                          {formatTimestamp(item.timestamp_ms)}
+                        </span>
+                        <div className="frame-thumbnail">
+                          <img
+                            src={`data:image/jpeg;base64,${item.base64}`}
+                            alt={`Screen capture at ${formatTimestamp(item.timestamp_ms)}`}
+                          />
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={`t-${i}`}
+                      className={`transcript-block ${item.isFinal ? 'transcript-final' : 'transcript-interim'}`}
+                      data-testid="transcript-block"
+                    >
+                      <span className="transcript-timestamp">
+                        {formatTimestamp(item.timestamp_ms)}
+                      </span>
+                      <span className="transcript-text">{item.text}</span>
+                    </div>
+                  );
+                })}
                 {interimText && (
                   <div
                     className="transcript-block transcript-interim"
@@ -160,7 +209,7 @@ export default function RecordingScreen({
                 )}
               </>
             )}
-            <div ref={transcriptEndRef} />
+            <div ref={feedEndRef} />
           </div>
         </div>
 

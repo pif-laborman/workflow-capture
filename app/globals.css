@@ -595,13 +595,21 @@ a {
   text-align: center;
 }
 
-/* Frame thumbnail */
+/* Feed frame entries */
+
+.feed-frame {
+  margin-bottom: var(--space-3);
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
 
 .frame-thumbnail {
-  margin-bottom: var(--space-4);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--border);
+  flex: 1;
+  min-width: 0;
 }
 
 .frame-thumbnail img {
