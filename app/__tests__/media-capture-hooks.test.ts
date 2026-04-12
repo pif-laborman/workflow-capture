@@ -152,10 +152,7 @@ describe('useMediaCapture', () => {
       displaySurface: 'browser',
     });
     const screenStream = createMockStream([screenTrack]);
-    const micTrack = createMockTrack('audio');
-    const micStream = createMockStream([micTrack]);
 
-    mockGetUserMedia.mockResolvedValue(micStream);
     mockGetDisplayMedia.mockResolvedValue(screenStream);
 
     const { result } = renderHook(() => useMediaCapture());
@@ -167,14 +164,11 @@ describe('useMediaCapture', () => {
     expect(result.current.error).toContain('entire screen');
     expect(result.current.isCapturing).toBe(false);
     expect(screenTrack.stop).toHaveBeenCalled();
-    expect(micTrack.stop).toHaveBeenCalled();
+    // getUserMedia should not have been called (rejected before mic prompt)
+    expect(mockGetUserMedia).not.toHaveBeenCalled();
   });
 
   it('sets error when getDisplayMedia fails', async () => {
-    const micTrack = createMockTrack('audio');
-    const micStream = createMockStream([micTrack]);
-
-    mockGetUserMedia.mockResolvedValue(micStream);
     mockGetDisplayMedia.mockRejectedValue(new Error('Permission denied'));
 
     const { result } = renderHook(() => useMediaCapture());
@@ -185,11 +179,15 @@ describe('useMediaCapture', () => {
 
     expect(result.current.error).toBe('Permission denied');
     expect(result.current.isCapturing).toBe(false);
-    // Mic tracks should be stopped when screen share fails
-    expect(micTrack.stop).toHaveBeenCalled();
+    // getUserMedia should not have been called
+    expect(mockGetUserMedia).not.toHaveBeenCalled();
   });
 
-  it('sets error when getUserMedia fails', async () => {
+  it('sets error and stops screen when getUserMedia fails', async () => {
+    const screenTrack = createMockTrack('video');
+    const screenStream = createMockStream([screenTrack]);
+
+    mockGetDisplayMedia.mockResolvedValue(screenStream);
     mockGetUserMedia.mockRejectedValue(new Error('Mic blocked'));
 
     const { result } = renderHook(() => useMediaCapture());
@@ -200,8 +198,8 @@ describe('useMediaCapture', () => {
 
     expect(result.current.error).toContain('Microphone access denied');
     expect(result.current.isCapturing).toBe(false);
-    // getDisplayMedia should not have been called
-    expect(mockGetDisplayMedia).not.toHaveBeenCalled();
+    // Screen tracks should be stopped on mic failure
+    expect(screenTrack.stop).toHaveBeenCalled();
   });
 });
 
