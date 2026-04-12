@@ -42,11 +42,8 @@ vi.mock('@/lib/hooks/useSpeechRecognition', () => ({
 
 const mockSpeak = vi.fn().mockResolvedValue(undefined);
 const mockCancel = vi.fn();
-let capturedTTSOptions: { onSpeakStart?: () => void; onSpeakEnd?: () => void } = {};
-
 vi.mock('@/lib/hooks/useTTS', () => ({
-  useTTS: (options: { onSpeakStart?: () => void; onSpeakEnd?: () => void }) => {
-    capturedTTSOptions = options;
+  useTTS: () => {
     return {
       speak: mockSpeak,
       isSpeaking: false,
@@ -145,7 +142,6 @@ describe('RecordingController', () => {
     mockSpeechRecognition.interimText = '';
     mockEvents.length = 0;
     mockObserveCallCount.value = 0;
-    capturedTTSOptions = {};
   });
 
   afterEach(() => {
