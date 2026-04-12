@@ -76,8 +76,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
       return NextResponse.json(SILENT_RESPONSE);
     }
 
-    // Parse JSON from Claude's response
-    const parsed = JSON.parse(textBlock.text) as ObserveResponse;
+    // Parse JSON from Claude's response (strip markdown code blocks if present)
+    let jsonStr = textBlock.text.trim();
+    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      jsonStr = codeBlockMatch[1].trim();
+    }
+
+    const parsed = JSON.parse(jsonStr) as ObserveResponse;
 
     // Update cooldown if Claude decided to speak
     if (parsed.speak) {
@@ -89,8 +95,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
       message: parsed.message || '',
       reason: parsed.reason || '',
     });
-  } catch {
-    // On any API or parse error, fail silently
+  } catch (err) {
+    console.error('Observe API error:', err);
     return NextResponse.json(SILENT_RESPONSE);
   }
 }
