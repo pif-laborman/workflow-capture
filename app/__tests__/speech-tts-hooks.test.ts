@@ -3,19 +3,41 @@ import { renderHook, act, cleanup } from '@testing-library/react';
 import { useSpeechRecognition } from '@/lib/hooks/useSpeechRecognition';
 import { useTTS } from '@/lib/hooks/useTTS';
 
-// --- Mock SpeechRecognition ---
+// --- Mock WebSocket ---
 
-class MockSpeechRecognition {
-  continuous = false;
-  interimResults = false;
-  lang = '';
-  onresult: ((event: unknown) => void) | null = null;
-  onend: (() => void) | null = null;
-  onerror: ((event: unknown) => void) | null = null;
+class MockWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
 
-  start = vi.fn();
-  stop = vi.fn();
-  abort = vi.fn();
+  readyState = MockWebSocket.CONNECTING;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+
+  send = vi.fn();
+  close = vi.fn(() => {
+    this.readyState = MockWebSocket.CLOSED;
+  });
+
+  // Test helper: simulate connection open
+  simulateOpen() {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.();
+  }
+
+  // Test helper: simulate message
+  simulateMessage(data: object) {
+    this.onmessage?.({ data: JSON.stringify(data) });
+  }
+
+  // Test helper: simulate close
+  simulateClose() {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
+  }
 }
 
 // --- Mock SpeechSynthesis ---
@@ -40,23 +62,66 @@ function createMockUtterance(text: string) {
 
 // --- Tests ---
 
-describe('useSpeechRecognition', () => {
-  let mockRecognition: MockSpeechRecognition;
+describe('useSpeechRecognition (Deepgram)', () => {
+  let mockWs: MockWebSocket;
 
   beforeEach(() => {
-    mockRecognition = new MockSpeechRecognition();
+    mockWs = new MockWebSocket();
 
+    // Mock WebSocket constructor (must use function, not arrow, to be callable with new)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (window as any).SpeechRecognition = function () {
-      return mockRecognition;
+    (globalThis as any).WebSocket = function () { return mockWs; };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).WebSocket.OPEN = MockWebSocket.OPEN;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).WebSocket.CONNECTING = MockWebSocket.CONNECTING;
+
+    // Mock AudioContext (must use function, not arrow, to be callable with new)
+    const mockProcessor = {
+      onaudioprocess: null as ((event: unknown) => void) | null,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
     };
+    const mockSource = {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).AudioContext = function () {
+      return {
+        sampleRate: 16000,
+        state: 'running',
+        createMediaStreamSource: vi.fn(() => mockSource),
+        createScriptProcessor: vi.fn(() => mockProcessor),
+        destination: {},
+        close: vi.fn().mockResolvedValue(undefined),
+        suspend: vi.fn().mockResolvedValue(undefined),
+        resume: vi.fn().mockResolvedValue(undefined),
+      };
+    };
+
+    // Mock fetch for /api/deepgram-token
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ key: 'test-deepgram-key' }),
+    });
+
+    // Mock getUserMedia (fallback if no stream passed)
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({
+          getTracks: vi.fn(() => []),
+          getAudioTracks: vi.fn(() => [{ stop: vi.fn() }]),
+        }),
+      },
+      configurable: true,
+      writable: true,
+    });
   });
 
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (window as any).SpeechRecognition;
   });
 
   it('initializes with default state', () => {
@@ -67,36 +132,38 @@ describe('useSpeechRecognition', () => {
     expect(result.current.interimText).toBe('');
   });
 
-  it('start() enables continuous + interimResults mode', () => {
+  it('start() sets isListening and fetches token', async () => {
     const { result } = renderHook(() => useSpeechRecognition());
 
-    act(() => {
+    await act(async () => {
       result.current.start();
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
     });
 
-    expect(mockRecognition.continuous).toBe(true);
-    expect(mockRecognition.interimResults).toBe(true);
-    expect(mockRecognition.start).toHaveBeenCalled();
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/deepgram-token');
     expect(result.current.isListening).toBe(true);
   });
 
-  it('produces transcript chunks with text, timestamp_ms, isFinal from final results', () => {
+  it('produces final transcript chunks from Deepgram messages', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(5000);
-
     const { result } = renderHook(() => useSpeechRecognition());
 
-    act(() => {
+    await act(async () => {
       result.current.start();
+      await new Promise((r) => setTimeout(r, 10));
     });
 
-    // Simulate a final result
+    // Simulate WebSocket open and a final result
     act(() => {
-      mockRecognition.onresult?.({
-        resultIndex: 0,
-        results: {
-          length: 1,
-          0: { 0: { transcript: 'hello world' }, isFinal: true, length: 1 },
-        },
+      mockWs.simulateOpen();
+    });
+
+    act(() => {
+      mockWs.simulateMessage({
+        channel: { alternatives: [{ transcript: 'hello world' }] },
+        is_final: true,
       });
     });
 
@@ -106,37 +173,37 @@ describe('useSpeechRecognition', () => {
       timestamp_ms: 5000,
       isFinal: true,
     });
+    expect(result.current.interimText).toBe('');
   });
 
-  it('returns interim results separately from final results', () => {
+  it('returns interim results separately from final results', async () => {
     const { result } = renderHook(() => useSpeechRecognition());
 
-    act(() => {
+    await act(async () => {
       result.current.start();
+      await new Promise((r) => setTimeout(r, 10));
     });
 
-    // Simulate an interim result
     act(() => {
-      mockRecognition.onresult?.({
-        resultIndex: 0,
-        results: {
-          length: 1,
-          0: { 0: { transcript: 'hel' }, isFinal: false, length: 1 },
-        },
+      mockWs.simulateOpen();
+    });
+
+    // Interim result
+    act(() => {
+      mockWs.simulateMessage({
+        channel: { alternatives: [{ transcript: 'hel' }] },
+        is_final: false,
       });
     });
 
     expect(result.current.interimText).toBe('hel');
     expect(result.current.transcriptChunks).toHaveLength(0);
 
-    // Now simulate the final version
+    // Final result
     act(() => {
-      mockRecognition.onresult?.({
-        resultIndex: 0,
-        results: {
-          length: 1,
-          0: { 0: { transcript: 'hello' }, isFinal: true, length: 1 },
-        },
+      mockWs.simulateMessage({
+        channel: { alternatives: [{ transcript: 'hello' }] },
+        is_final: true,
       });
     });
 
@@ -145,11 +212,36 @@ describe('useSpeechRecognition', () => {
     expect(result.current.transcriptChunks[0].text).toBe('hello');
   });
 
-  it('pause() stops recognition, resume() restarts it', () => {
+  it('stop() cleans up and resets state', async () => {
     const { result } = renderHook(() => useSpeechRecognition());
 
-    act(() => {
+    await act(async () => {
       result.current.start();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    act(() => {
+      mockWs.simulateOpen();
+    });
+
+    act(() => {
+      result.current.stop();
+    });
+
+    expect(result.current.isListening).toBe(false);
+    expect(result.current.interimText).toBe('');
+  });
+
+  it('pause() suspends audio, resume() restarts it', async () => {
+    const { result } = renderHook(() => useSpeechRecognition());
+
+    await act(async () => {
+      result.current.start();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    act(() => {
+      mockWs.simulateOpen();
     });
 
     expect(result.current.isListening).toBe(true);
@@ -158,77 +250,13 @@ describe('useSpeechRecognition', () => {
       result.current.pause();
     });
 
-    expect(mockRecognition.stop).toHaveBeenCalled();
     expect(result.current.isListening).toBe(false);
-
-    // Reset to check resume calls start again
-    mockRecognition.start.mockClear();
 
     act(() => {
       result.current.resume();
     });
 
-    expect(mockRecognition.start).toHaveBeenCalled();
     expect(result.current.isListening).toBe(true);
-  });
-
-  it('auto-restarts on end event if still active', () => {
-    const { result } = renderHook(() => useSpeechRecognition());
-
-    act(() => {
-      result.current.start();
-    });
-
-    // Clear call count from initial start
-    mockRecognition.start.mockClear();
-
-    // Simulate recognition ending unexpectedly
-    act(() => {
-      mockRecognition.onend?.();
-    });
-
-    // Should have auto-restarted
-    expect(mockRecognition.start).toHaveBeenCalled();
-    expect(result.current.isListening).toBe(true);
-  });
-
-  it('does not restart on end event after stop()', () => {
-    const { result } = renderHook(() => useSpeechRecognition());
-
-    act(() => {
-      result.current.start();
-    });
-
-    act(() => {
-      result.current.stop();
-    });
-
-    mockRecognition.start.mockClear();
-
-    // Simulate end event after stop
-    act(() => {
-      mockRecognition.onend?.();
-    });
-
-    // Should NOT restart
-    expect(mockRecognition.start).not.toHaveBeenCalled();
-    expect(result.current.isListening).toBe(false);
-  });
-
-  it('stop() clears recognition and resets state', () => {
-    const { result } = renderHook(() => useSpeechRecognition());
-
-    act(() => {
-      result.current.start();
-    });
-
-    act(() => {
-      result.current.stop();
-    });
-
-    expect(mockRecognition.stop).toHaveBeenCalled();
-    expect(result.current.isListening).toBe(false);
-    expect(result.current.interimText).toBe('');
   });
 });
 

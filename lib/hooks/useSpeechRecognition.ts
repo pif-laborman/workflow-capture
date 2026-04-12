@@ -3,33 +3,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { TranscriptChunk } from '@/lib/types';
 
-/** Minimal interface for Web Speech API SpeechRecognition */
-interface SpeechRecognitionInstance {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
-  onend: (() => void) | null;
-  onerror: ((event: { error: string }) => void) | null;
-  start(): void;
-  stop(): void;
-  abort(): void;
-}
-
-interface SpeechRecognitionResultEvent {
-  resultIndex: number;
-  results: {
-    length: number;
-    [index: number]: {
-      isFinal: boolean;
-      length: number;
-      [index: number]: { transcript: string };
-    };
-  };
-}
-
 interface UseSpeechRecognitionReturn {
-  start: () => void;
+  start: (micStream?: MediaStream) => void;
   stop: () => void;
   pause: () => void;
   resume: () => void;
@@ -38,12 +13,62 @@ interface UseSpeechRecognitionReturn {
   isListening: boolean;
 }
 
-// Use vendor-prefixed SpeechRecognition if available
-function getSpeechRecognitionCtor(): (new () => SpeechRecognitionInstance) | null {
-  if (typeof window === 'undefined') return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const w = window as any;
-  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+interface DeepgramResult {
+  channel?: {
+    alternatives?: Array<{
+      transcript?: string;
+    }>;
+  };
+  is_final?: boolean;
+}
+
+const DEEPGRAM_WS_URL = 'wss://api.deepgram.com/v1/listen';
+const DEEPGRAM_PARAMS = [
+  'model=nova-2',
+  'language=en',
+  'smart_format=true',
+  'interim_results=true',
+  'endpointing=300',
+  'encoding=linear16',
+  'sample_rate=16000',
+  'channels=1',
+].join('&');
+
+/**
+ * Captures raw PCM audio from a MediaStream at 16kHz mono.
+ * Returns a cleanup function to disconnect the pipeline.
+ */
+function createAudioPipeline(
+  stream: MediaStream,
+  onAudioData: (data: ArrayBuffer) => void,
+): { audioCtx: AudioContext; cleanup: () => void } {
+  const audioCtx = new AudioContext({ sampleRate: 16000 });
+  const source = audioCtx.createMediaStreamSource(stream);
+
+  // ScriptProcessor: buffer size 4096 at 16kHz = 256ms chunks
+  const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+  processor.onaudioprocess = (event) => {
+    const float32 = event.inputBuffer.getChannelData(0);
+    // Convert Float32 [-1,1] to Int16 PCM
+    const int16 = new Int16Array(float32.length);
+    for (let i = 0; i < float32.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32[i]));
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    onAudioData(int16.buffer);
+  };
+
+  source.connect(processor);
+  processor.connect(audioCtx.destination);
+
+  const cleanup = () => {
+    processor.disconnect();
+    source.disconnect();
+    audioCtx.close().catch(() => {});
+  };
+
+  return { audioCtx, cleanup };
 }
 
 export function useSpeechRecognition(): UseSpeechRecognitionReturn {
@@ -51,122 +76,145 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [interimText, setInterimText] = useState('');
   const [isListening, setIsListening] = useState(false);
 
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const activeRef = useRef(false); // true when we want recognition running (not paused/stopped)
+  const wsRef = useRef<WebSocket | null>(null);
+  const audioCleanupRef = useRef<(() => void) | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const activeRef = useRef(false);
 
-  const handleResult = useCallback((event: SpeechRecognitionResultEvent) => {
-    let interim = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      const text = result[0].transcript;
-      if (result.isFinal) {
-        const chunk: TranscriptChunk = {
-          text,
-          timestamp_ms: Date.now(),
-          isFinal: true,
-        };
-        setTranscriptChunks((prev) => [...prev, chunk]);
-      } else {
-        interim += text;
-      }
-    }
-    setInterimText(interim);
-  }, []);
-
-  const handleEnd = useCallback(() => {
-    // Auto-restart if still active (browser sometimes stops recognition)
-    if (activeRef.current && recognitionRef.current) {
+  const cleanupConnection = useCallback(() => {
+    if (wsRef.current) {
       try {
-        recognitionRef.current.start();
-      } catch {
-        // Already started or destroyed — ignore
-      }
-    } else {
-      setIsListening(false);
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'CloseStream' }));
+        }
+        wsRef.current.close();
+      } catch { /* ignore */ }
+      wsRef.current = null;
     }
+    if (audioCleanupRef.current) {
+      audioCleanupRef.current();
+      audioCleanupRef.current = null;
+    }
+    audioCtxRef.current = null;
   }, []);
 
-  const handleError = useCallback((event: { error: string }) => {
-    // For non-fatal errors, let onend handle restart
-    if (event.error === 'aborted' || event.error === 'no-speech') {
-      return;
-    }
-    // Fatal errors — stop
-    activeRef.current = false;
-    setIsListening(false);
-  }, []);
+  const start = useCallback((micStream?: MediaStream) => {
+    if (typeof window === 'undefined') return;
 
-  const start = useCallback(() => {
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) return;
-
-    // Clean up any existing instance
-    if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch { /* ignore */ }
-    }
-
-    const recognition = new Ctor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = handleResult;
-    recognition.onend = handleEnd;
-    recognition.onerror = handleError;
-
-    recognitionRef.current = recognition;
     activeRef.current = true;
-    setIsListening(true);
     setTranscriptChunks([]);
     setInterimText('');
+    setIsListening(true);
 
-    try {
-      recognition.start();
-    } catch {
-      // ignore if already started
-    }
-  }, [handleResult, handleEnd, handleError]);
+    (async () => {
+      try {
+        // Use provided mic stream or request one
+        const stream = micStream || await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // Fetch Deepgram API key from server
+        const tokenRes = await fetch('/api/deepgram-token');
+        if (!tokenRes.ok) {
+          console.error('Failed to fetch Deepgram token');
+          activeRef.current = false;
+          setIsListening(false);
+          return;
+        }
+        const { key } = await tokenRes.json();
+
+        if (!activeRef.current) return;
+
+        // Open WebSocket to Deepgram
+        const ws = new WebSocket(`${DEEPGRAM_WS_URL}?${DEEPGRAM_PARAMS}`, ['token', key]);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          if (!activeRef.current) {
+            ws.close();
+            return;
+          }
+          const { audioCtx, cleanup } = createAudioPipeline(stream, (data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(data);
+            }
+          });
+          audioCtxRef.current = audioCtx;
+          audioCleanupRef.current = cleanup;
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            const result: DeepgramResult = msg;
+            const transcript = result.channel?.alternatives?.[0]?.transcript || '';
+
+            if (!transcript) return;
+
+            if (result.is_final) {
+              const chunk: TranscriptChunk = {
+                text: transcript,
+                timestamp_ms: Date.now(),
+                isFinal: true,
+              };
+              setTranscriptChunks((prev) => [...prev, chunk]);
+              setInterimText('');
+            } else {
+              setInterimText(transcript);
+            }
+          } catch { /* ignore malformed messages */ }
+        };
+
+        ws.onerror = () => {
+          cleanupConnection();
+          activeRef.current = false;
+          setIsListening(false);
+        };
+
+        ws.onclose = () => {
+          if (activeRef.current) {
+            cleanupConnection();
+            activeRef.current = false;
+            setIsListening(false);
+          }
+        };
+      } catch (err) {
+        console.error('Deepgram speech recognition failed:', err);
+        cleanupConnection();
+        activeRef.current = false;
+        setIsListening(false);
+      }
+    })();
+  }, [cleanupConnection]);
 
   const stop = useCallback(() => {
     activeRef.current = false;
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch { /* ignore */ }
-      recognitionRef.current = null;
-    }
+    cleanupConnection();
     setIsListening(false);
     setInterimText('');
-  }, []);
+  }, [cleanupConnection]);
 
   const pause = useCallback(() => {
     activeRef.current = false;
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch { /* ignore */ }
+    if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
+      audioCtxRef.current.suspend().catch(() => {});
     }
     setIsListening(false);
   }, []);
 
   const resume = useCallback(() => {
-    if (recognitionRef.current) {
-      activeRef.current = true;
-      setIsListening(true);
-      try {
-        recognitionRef.current.start();
-      } catch {
-        // ignore if already started
-      }
+    activeRef.current = true;
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
     }
+    setIsListening(true);
   }, []);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       activeRef.current = false;
-      if (recognitionRef.current) {
-        try { recognitionRef.current.abort(); } catch { /* ignore */ }
-        recognitionRef.current = null;
-      }
+      cleanupConnection();
     };
-  }, []);
+  }, [cleanupConnection]);
 
   return {
     start,

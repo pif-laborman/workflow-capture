@@ -92,7 +92,7 @@ export default function RecordingController() {
     async function initCapture() {
       try {
         await mediaCapture.startCapture();
-        speechRecognition.start();
+        speechRecognition.start(mediaCapture.micStream || undefined);
         setState(AppState.RecordingActive);
       } catch {
         // If capture fails, go back to NewCapture
