@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppState, SavedWorkflow } from '@/lib/types';
 import { useAppState } from '@/lib/state';
 import { getWorkflows } from '@/lib/storage';
@@ -41,7 +42,8 @@ function ConfidenceDots({ steps }: { steps: { notes: string }[] }) {
 }
 
 export default function HomeScreen() {
-  const { setState, setSelectedWorkflowId } = useAppState();
+  const { setState } = useAppState();
+  const router = useRouter();
   const [workflows, setWorkflows] = useState<SavedWorkflow[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -57,8 +59,7 @@ export default function HomeScreen() {
   };
 
   const handleSelectWorkflow = (id: string) => {
-    setSelectedWorkflowId(id);
-    setState(AppState.Results);
+    router.push(`/workflow/${id}`);
   };
 
   if (workflows.length === 0) {

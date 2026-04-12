@@ -3,6 +3,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { useState } from 'react';
 import { AppState, SavedWorkflow } from '@/lib/types';
 import { AppStateContext, initialSessionData } from '@/lib/state';
+import { mockRouter } from '../../vitest.setup';
 import HomeScreen from '@/components/HomeScreen';
 
 afterEach(() => {
@@ -182,12 +183,12 @@ describe('HomeScreen — populated state', () => {
     expect(getState()).toBe(AppState.NewCapture);
   });
 
-  it('clicking a workflow card navigates to results with selectedWorkflowId set', () => {
-    const { Wrapper, getState, getWorkflowId } = createWrapper();
+  it('clicking a workflow card navigates to deep link', () => {
+    mockRouter.push.mockClear();
+    const { Wrapper } = createWrapper();
     render(<Wrapper><HomeScreen /></Wrapper>);
     fireEvent.click(screen.getByTestId('workflow-card-wf-2'));
-    expect(getState()).toBe(AppState.Results);
-    expect(getWorkflowId()).toBe('wf-2');
+    expect(mockRouter.push).toHaveBeenCalledWith('/workflow/wf-2');
   });
 
   it('shows footer with localStorage warning', () => {

@@ -3,6 +3,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { AppState, EventType, SessionEvent, WorkflowDocument, WorkflowStep } from '@/lib/types';
 import { AppStateContext, SessionData, initialSessionData } from '@/lib/state';
 import ResultsScreen from '@/components/ResultsScreen';
+import { mockRouter } from '../../vitest.setup';
 
 // --- Helpers ---
 
@@ -324,16 +325,17 @@ describe('ResultsScreen', () => {
 
   describe('Footer navigation', () => {
     it('All workflows button navigates to home', () => {
+      mockRouter.push.mockClear();
       renderWithContext();
       fireEvent.click(screen.getByTestId('all-workflows-btn'));
-      expect(mockSetState).toHaveBeenCalledWith(AppState.Home);
-      expect(mockSetSelectedWorkflowId).toHaveBeenCalledWith(null);
+      expect(mockRouter.push).toHaveBeenCalledWith('/');
     });
 
-    it('New capture button navigates to new-capture', () => {
+    it('New capture button navigates to home', () => {
+      mockRouter.push.mockClear();
       renderWithContext();
       fireEvent.click(screen.getByTestId('new-capture-btn'));
-      expect(mockSetState).toHaveBeenCalledWith(AppState.NewCapture);
+      expect(mockRouter.push).toHaveBeenCalledWith('/');
       expect(mockSetSelectedWorkflowId).toHaveBeenCalledWith(null);
     });
   });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAppState } from '@/lib/state';
 import { AppState, EventType, WorkflowDocument, WorkflowStep } from '@/lib/types';
 import { saveWorkflow as persistWorkflow, getWorkflow as loadWorkflow } from '@/lib/storage';
@@ -86,6 +87,7 @@ function StepCard({ step }: StepCardProps) {
 
 export default function ResultsScreen() {
   const { sessionData, setSessionData, setState, selectedWorkflowId, setSelectedWorkflowId } = useAppState();
+  const router = useRouter();
 
   // Load workflow from selectedWorkflowId (viewing saved) or sessionData (just processed)
   let workflow: WorkflowDocument | null = null;
@@ -189,15 +191,15 @@ export default function ResultsScreen() {
   };
 
   const handleAllWorkflows = () => {
-    setSelectedWorkflowId(null);
-    setSessionData({ ...sessionData, workflowResult: null, events: [] });
-    setState(AppState.Home);
+    router.push('/');
   };
 
   const handleNewCapture = () => {
     setSelectedWorkflowId(null);
     setSessionData({ workflowName: '', events: [], workflowResult: null });
-    setState(AppState.NewCapture);
+    router.push('/');
+    // Small delay to ensure navigation, then set state
+    setTimeout(() => setState(AppState.NewCapture), 50);
   };
 
   return (

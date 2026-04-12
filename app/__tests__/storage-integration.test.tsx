@@ -6,6 +6,7 @@ import { AppStateContext, SessionData, initialSessionData } from '@/lib/state';
 import { saveWorkflow, getWorkflows } from '@/lib/storage';
 import HomeScreen from '@/components/HomeScreen';
 import ResultsScreen from '@/components/ResultsScreen';
+import { mockRouter } from '../../vitest.setup';
 
 afterEach(() => {
   cleanup();
@@ -76,35 +77,17 @@ describe('HomeScreen + storage integration', () => {
     expect(screen.getByText('Old Workflow')).toBeTruthy();
   });
 
-  it('clicking a workflow card sets selectedWorkflowId and navigates to Results', () => {
+  it('clicking a workflow card navigates to deep link', () => {
+    mockRouter.push.mockClear();
     const wf = makeSavedWorkflow({ id: 'wf-click-test' });
     saveWorkflow(wf);
 
-    let capturedState = AppState.Home;
-    let capturedWorkflowId: string | null = null;
-
-    function TrackingWrapper({ children }: { children: React.ReactNode }) {
-      const [currentState, setState] = useState(AppState.Home);
-      const [sessionData, setSessionData] = useState<SessionData>(initialSessionData);
-      const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
-
-      capturedState = currentState;
-      capturedWorkflowId = selectedWorkflowId;
-
-      return (
-        <AppStateContext.Provider value={{ currentState, setState, sessionData, setSessionData, selectedWorkflowId, setSelectedWorkflowId }}>
-          {children}
-        </AppStateContext.Provider>
-      );
-    }
-
-    render(<HomeScreen />, { wrapper: TrackingWrapper });
+    render(<HomeScreen />, { wrapper: HomeWrapper });
 
     const card = screen.getByTestId('workflow-card-wf-click-test');
     fireEvent.click(card);
 
-    expect(capturedState).toBe(AppState.Results);
-    expect(capturedWorkflowId).toBe('wf-click-test');
+    expect(mockRouter.push).toHaveBeenCalledWith('/workflow/wf-click-test');
   });
 });
 
