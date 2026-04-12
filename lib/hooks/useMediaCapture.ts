@@ -45,11 +45,8 @@ export function useMediaCapture(): UseMediaCaptureReturn {
       const screen = await navigator.mediaDevices.getDisplayMedia({
         video: { displaySurface: 'monitor' },
         audio: true,
-        // @ts-expect-error not in TS types yet
         preferCurrentTab: false,
-        // @ts-expect-error not in TS types yet
         selfBrowserSurface: 'exclude',
-        // @ts-expect-error not in TS types yet
         systemAudio: 'include',
       } as DisplayMediaStreamOptions);
 
