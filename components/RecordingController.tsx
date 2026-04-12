@@ -102,8 +102,13 @@ export default function RecordingController() {
         }
         setCountdown(null);
 
-        speechRecognition.start(mediaCapture.micStream || undefined);
+        // Intro message: set expectations before the user starts
         setState(AppState.RecordingActive);
+        const introMessage = "I'm watching your screen now. Walk me through what you're about to do, step by step. Tell me what you're clicking and why. I'll jump in if something isn't clear.";
+        eventLog.addInterjection(introMessage, 'intro', Date.now());
+        await tts.speak(introMessage);
+
+        speechRecognition.start(mediaCapture.micStream || undefined);
       } catch {
         // If capture fails, go back to NewCapture
         startedRef.current = false;
