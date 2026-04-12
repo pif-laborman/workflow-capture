@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useAppState } from '@/lib/state';
-import { AppState, EventType, WorkflowDocument } from '@/lib/types';
+import { AppState, EventType, SessionEvent, WorkflowDocument } from '@/lib/types';
 
 interface ProgressStep {
   label: string;
@@ -46,11 +46,26 @@ export default function ProcessingScreen() {
 
     async function finalize() {
       try {
+        // Strip base64 frame data to keep payload under Vercel body limit.
+        // Replace with a lightweight marker; Claude already observed frames live.
+        const lightEvents: SessionEvent[] = sessionData.events.map((e) => {
+          if (e.type === EventType.Frame) {
+            return {
+              ...e,
+              payload: {
+                frame_captured: true,
+                timestamp_ms: e.timestamp_ms,
+              },
+            };
+          }
+          return e;
+        });
+
         const response = await fetch('/api/finalize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            events: sessionData.events,
+            events: lightEvents,
             workflow_name: sessionData.workflowName || 'Untitled Workflow',
           }),
           signal: controller.signal,
