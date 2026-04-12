@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { useMediaCapture } from '@/lib/hooks/useMediaCapture';
-import { useFrameSampler, TimestampedFrame } from '@/lib/hooks/useFrameSampler';
+import { useFrameSampler } from '@/lib/hooks/useFrameSampler';
 import { FRAME_INTERVAL_MS, JPEG_QUALITY } from '@/lib/constants';
 
 // --- Mock helpers ---
