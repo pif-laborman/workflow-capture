@@ -43,16 +43,29 @@ export function useMediaCapture(): UseMediaCaptureReturn {
 
     try {
       const screen = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
+        video: { displaySurface: 'monitor' },
         audio: true,
+        // @ts-expect-error preferCurrentTab is not in TS types yet
+        preferCurrentTab: false,
+        // @ts-expect-error systemAudio is not in TS types yet
+        systemAudio: 'include',
       });
+
+      // Reject if user picked a tab or window instead of entire screen
+      const videoTrack = screen.getVideoTracks()[0];
+      const surface = videoTrack?.getSettings().displaySurface;
+      if (surface && surface !== 'monitor') {
+        screen.getTracks().forEach((track) => track.stop());
+        throw new Error(
+          'Please share your entire screen, not a single tab or window.'
+        );
+      }
 
       // Check if screen share includes audio
       const audioTracks = screen.getAudioTracks();
       setHasTabAudio(audioTracks.length > 0);
 
       // Listen for user stopping screen share via browser UI
-      const videoTrack = screen.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.addEventListener('ended', () => {
           stopCapture();

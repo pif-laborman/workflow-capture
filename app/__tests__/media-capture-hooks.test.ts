@@ -17,7 +17,7 @@ function createMockTrack(kind: 'video' | 'audio', live = true): MediaStreamTrack
       listeners[event].push(cb);
     }),
     removeEventListener: vi.fn(),
-    getSettings: vi.fn(() => ({ width: 1920, height: 1080 })),
+    getSettings: vi.fn(() => ({ width: 1920, height: 1080, displaySurface: 'monitor' })),
   } as unknown as MediaStreamTrack;
 }
 
@@ -82,7 +82,12 @@ describe('useMediaCapture', () => {
       await result.current.startCapture();
     });
 
-    expect(mockGetDisplayMedia).toHaveBeenCalledWith({ video: true, audio: true });
+    expect(mockGetDisplayMedia).toHaveBeenCalledWith({
+      video: { displaySurface: 'monitor' },
+      audio: true,
+      preferCurrentTab: false,
+      systemAudio: 'include',
+    });
     expect(mockGetUserMedia).toHaveBeenCalledWith({ audio: true });
     expect(result.current.isCapturing).toBe(true);
     expect(result.current.screenStream).toBe(screenStream);
@@ -136,6 +141,28 @@ describe('useMediaCapture', () => {
     expect(result.current.isCapturing).toBe(false);
     expect(result.current.screenStream).toBeNull();
     expect(result.current.micStream).toBeNull();
+  });
+
+  it('rejects tab or window shares (non-monitor surface)', async () => {
+    const screenTrack = createMockTrack('video');
+    (screenTrack.getSettings as ReturnType<typeof vi.fn>).mockReturnValue({
+      width: 1920,
+      height: 1080,
+      displaySurface: 'browser',
+    });
+    const screenStream = createMockStream([screenTrack]);
+
+    mockGetDisplayMedia.mockResolvedValue(screenStream);
+
+    const { result } = renderHook(() => useMediaCapture());
+
+    await act(async () => {
+      await result.current.startCapture();
+    });
+
+    expect(result.current.error).toContain('entire screen');
+    expect(result.current.isCapturing).toBe(false);
+    expect(screenTrack.stop).toHaveBeenCalled();
   });
 
   it('sets error when getDisplayMedia fails', async () => {
