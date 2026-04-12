@@ -21,9 +21,11 @@ const COUNTDOWN_HINTS: Record<number, string> = {
 };
 
 /** Short beep via Web Audio API. Final tick is higher pitch. */
-function playCountdownBeep(isFinal: boolean) {
+async function playCountdownBeep(isFinal: boolean) {
   try {
     const ctx = new AudioContext();
+    // Chrome requires explicit resume after user gesture
+    if (ctx.state === 'suspended') await ctx.resume();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
