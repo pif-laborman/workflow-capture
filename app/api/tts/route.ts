@@ -47,6 +47,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   try {
     const refAudio = getRefAudio();
 
+    // Non-streaming: get complete MP3 in one call (simpler, more reliable)
+    // Voxtral streaming uses SSE which adds complexity for marginal gain
+    // on short interjection sentences
     const response = await fetch('https://api.mistral.ai/v1/audio/speech', {
       method: 'POST',
       headers: {

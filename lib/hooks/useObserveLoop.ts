@@ -156,11 +156,11 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
         // Pre-play check: has the user started speaking since we made the API call?
         const currentTranscript = opts.getTranscriptWindow(120);
         if (currentTranscript.length !== transcriptWindow.length) {
-          // User started talking while we were waiting for Claude. Skip this interjection.
+          // User started talking while we were waiting for Claude. Skip.
           setSilentCount((c) => c + 1);
         } else {
-          // Brief pause to let Deepgram catch up, then re-check
-          await new Promise((r) => setTimeout(r, 500));
+          // Brief 200ms pause to let Deepgram catch up, then re-check
+          await new Promise((r) => setTimeout(r, 200));
           const recheckTranscript = opts.getTranscriptWindow(120);
           if (recheckTranscript.length !== transcriptWindow.length) {
             // User started talking during the pause. Skip.
