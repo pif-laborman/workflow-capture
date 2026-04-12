@@ -26,6 +26,8 @@ export interface RecordingScreenProps {
   interjections: Interjection[];
   framesCaptured: number;
   observeCallCount: number;
+  speakCount: number;
+  silentCount: number;
   capturedFrames: CapturedFrame[];
   onStop: () => void;
 }
@@ -51,6 +53,8 @@ export default function RecordingScreen({
   interjections,
   framesCaptured,
   observeCallCount,
+  speakCount,
+  silentCount,
   capturedFrames,
   onStop,
 }: RecordingScreenProps) {
@@ -132,8 +136,12 @@ export default function RecordingScreen({
             <span className="metric-label">observe</span>
           </span>
           <span className="metric">
-            <span className="metric-value" data-testid="interjection-count">{interjections.length}</span>
-            <span className="metric-label">interjections</span>
+            <span className="metric-value" data-testid="speak-count">{speakCount}</span>
+            <span className="metric-label">spoke</span>
+          </span>
+          <span className="metric">
+            <span className="metric-value" data-testid="silent-count">{silentCount}</span>
+            <span className="metric-label">silent</span>
           </span>
         </div>
 

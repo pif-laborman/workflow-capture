@@ -46,7 +46,7 @@ export default function RecordingController() {
   const getLatestFrame = useCallback(() => latestFrameRef.current, []);
 
   // Observe loop
-  const { observeCallCount } = useObserveLoop({
+  const { observeCallCount, speakCount, silentCount } = useObserveLoop({
     isRecording: currentState === AppState.RecordingActive,
     getLatestFrame,
     getTranscriptWindow: eventLog.getTranscriptWindow,
@@ -160,6 +160,8 @@ export default function RecordingController() {
       interjections={interjections}
       framesCaptured={framesCaptured}
       observeCallCount={observeCallCount}
+      speakCount={speakCount}
+      silentCount={silentCount}
       capturedFrames={capturedFrames}
       onStop={handleStop}
     />

@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { COOLDOWN_MS } from '@/lib/constants';
 import { OBSERVE_SYSTEM_PROMPT } from '@/lib/prompts/observe';
-import { getLastInterjectionTimestamp, setLastInterjectionTimestamp } from '@/lib/cooldown';
 import type { ObserveRequest, ObserveResponse } from '@/lib/types';
 
 const SILENT_RESPONSE: ObserveResponse = {
@@ -12,7 +10,7 @@ const SILENT_RESPONSE: ObserveResponse = {
 };
 
 export async function POST(request: NextRequest): Promise<NextResponse<ObserveResponse>> {
-  // Graceful fallback: no API key → silent
+  // Graceful fallback: no API key -> silent
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(SILENT_RESPONSE);
@@ -28,17 +26,44 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
     );
   }
 
-  // Server-side cooldown check
-  const now = Date.now();
-  const lastTs = getLastInterjectionTimestamp();
-  const msSinceLastInterjection = now - lastTs;
-  if (lastTs > 0 && msSinceLastInterjection < COOLDOWN_MS) {
-    return NextResponse.json({ speak: false, message: '', reason: 'cooldown' });
+  // Build image content: previous frames (older) + current frame (newest)
+  const imageContent: Anthropic.ImageBlockParam[] = [];
+
+  // Add previous frames for context (so Claude can see screen changes)
+  if (body.previous_frames?.length) {
+    for (const prevFrame of body.previous_frames) {
+      imageContent.push({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: prevFrame },
+      });
+    }
   }
 
-  // Also respect client-reported cooldown
-  if (body.seconds_since_last_interjection < COOLDOWN_MS / 1000) {
-    return NextResponse.json({ speak: false, message: '', reason: 'cooldown' });
+  // Add current (latest) frame
+  imageContent.push({
+    type: 'image',
+    source: { type: 'base64', media_type: 'image/jpeg', data: body.frame },
+  });
+
+  // Build context text
+  const contextParts: string[] = [];
+
+  if (body.transcript_window) {
+    contextParts.push(`Current transcript (last 2 minutes):\n${body.transcript_window}`);
+  } else {
+    contextParts.push('Current transcript: (empty, user has not spoken yet)');
+  }
+
+  if (body.seconds_silent !== undefined && body.seconds_silent > 5) {
+    contextParts.push(`\nNOTE: The user has been SILENT for ${body.seconds_silent} seconds while the screen has been active. Consider asking what they are doing.`);
+  }
+
+  if (body.previous_interjections?.length) {
+    contextParts.push(`\nYour previous questions this session (DO NOT repeat these):\n${body.previous_interjections.map((q, i) => `${i + 1}. ${q}`).join('\n')}`);
+  }
+
+  if (body.previous_frames?.length) {
+    contextParts.push(`\nYou are seeing ${body.previous_frames.length + 1} screenshots in chronological order. The LAST image is the current screen. Compare them to detect what changed.`);
   }
 
   // Call Claude Sonnet
@@ -53,23 +78,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
         {
           role: 'user',
           content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: 'image/jpeg',
-                data: body.frame,
-              },
-            },
-            {
-              type: 'text',
-              text: [
-                `Current transcript:\n${body.transcript_window}`,
-                body.previous_interjections?.length
-                  ? `\nYour previous questions this session (DO NOT repeat these):\n${body.previous_interjections.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
-                  : '',
-              ].join(''),
-            },
+            ...imageContent,
+            { type: 'text', text: contextParts.join('') },
           ],
         },
       ],
@@ -89,11 +99,6 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
     }
 
     const parsed = JSON.parse(jsonStr) as ObserveResponse;
-
-    // Update cooldown if Claude decided to speak
-    if (parsed.speak) {
-      setLastInterjectionTimestamp(Date.now());
-    }
 
     return NextResponse.json({
       speak: !!parsed.speak,

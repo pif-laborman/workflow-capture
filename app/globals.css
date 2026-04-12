@@ -1097,6 +1097,23 @@ a {
   border-top: 1px solid var(--border);
 }
 
+/* Transcript display */
+
+.results-transcript {
+  background: var(--bg-warm);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.results-transcript p {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
 /* ==========================================================================
    Unsupported Browser
    ========================================================================== */

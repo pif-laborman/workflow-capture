@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { COOLDOWN_MS } from '@/lib/constants';
 
 const mockCreate = vi.fn();
 
@@ -11,7 +10,6 @@ vi.mock('@anthropic-ai/sdk', () => {
 });
 
 import { POST } from '@/app/api/observe/route';
-import { resetCooldown, getLastInterjectionTimestamp } from '@/lib/cooldown';
 
 function makeRequest(body: Record<string, unknown>): Request {
   return new Request('http://localhost:3000/api/observe', {
@@ -31,7 +29,6 @@ describe('/api/observe', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    resetCooldown();
     mockCreate.mockReset();
     process.env = { ...originalEnv, ANTHROPIC_API_KEY: 'test-key-123' };
   });
@@ -62,74 +59,6 @@ describe('/api/observe', () => {
       await POST(req);
 
       expect(mockCreate).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('cooldown enforcement', () => {
-    it('returns cooldown when client reports seconds_since_last_interjection < 5', async () => {
-      const body = { ...validBody, seconds_since_last_interjection: 3 };
-      const req = makeRequest(body) as unknown as Parameters<typeof POST>[0];
-      const res = await POST(req);
-      const data = await res.json();
-
-      expect(data.speak).toBe(false);
-      expect(data.reason).toBe('cooldown');
-    });
-
-    it('enforces server-side cooldown after an interjection', async () => {
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ speak: true, message: 'Why did you click that?', reason: 'missing_why' }) }],
-      });
-
-      const req1 = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
-      const res1 = await POST(req1);
-      const data1 = await res1.json();
-      expect(data1.speak).toBe(true);
-
-      // Second call immediately: should be cooldown
-      const req2 = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
-      const res2 = await POST(req2);
-      const data2 = await res2.json();
-      expect(data2.speak).toBe(false);
-      expect(data2.reason).toBe('cooldown');
-    });
-
-    it('allows interjection after cooldown expires', async () => {
-      // First call: Claude speaks
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ speak: true, message: 'Question?', reason: 'missing_why' }) }],
-      });
-
-      const req1 = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
-      await POST(req1);
-
-      // Advance time past cooldown
-      const realDateNow = Date.now;
-      const frozenNow = realDateNow();
-      vi.spyOn(Date, 'now').mockReturnValue(frozenNow + COOLDOWN_MS + 1000);
-
-      // Second call: Claude speaks again
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ speak: true, message: 'Another question?', reason: 'contradiction' }) }],
-      });
-
-      const req2 = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
-      const res2 = await POST(req2);
-      const data2 = await res2.json();
-      expect(data2.speak).toBe(true);
-    });
-
-    it('updates lastInterjectionTimestamp only when speak is true', async () => {
-      expect(getLastInterjectionTimestamp()).toBe(0);
-
-      mockCreate.mockResolvedValueOnce({
-        content: [{ type: 'text', text: JSON.stringify({ speak: false, message: '', reason: 'none' }) }],
-      });
-
-      const req = makeRequest(validBody) as unknown as Parameters<typeof POST>[0];
-      await POST(req);
-
-      expect(getLastInterjectionTimestamp()).toBe(0);
     });
   });
 

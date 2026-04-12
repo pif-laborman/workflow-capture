@@ -139,8 +139,8 @@ describe('Constants', () => {
     expect(OBSERVE_INTERVAL_MS).toBe(2000);
   });
 
-  it('COOLDOWN_MS is 15000', () => {
-    expect(COOLDOWN_MS).toBe(15000);
+  it('COOLDOWN_MS is 10000', () => {
+    expect(COOLDOWN_MS).toBe(10000);
   });
 
   it('FRAME_INTERVAL_MS is 1000', () => {

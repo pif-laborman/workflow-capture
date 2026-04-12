@@ -94,6 +94,7 @@ export default function ResultsScreen() {
   let durationMs = 0;
   let sessionEvents = sessionData.events;
   let workflowName = sessionData.workflowName;
+  let savedTranscript = '';
 
   if (selectedWorkflowId) {
     const found = loadWorkflow(selectedWorkflowId);
@@ -102,6 +103,7 @@ export default function ResultsScreen() {
       durationMs = found.duration_ms;
       sessionEvents = found.session_events;
       workflowName = found.name;
+      savedTranscript = found.transcript || '';
     }
   } else {
     workflow = sessionData.workflowResult;
@@ -110,6 +112,16 @@ export default function ResultsScreen() {
       durationMs = Math.max(...timestamps) - Math.min(...timestamps);
     }
   }
+
+  // Build transcript from events (for freshly processed workflows)
+  const transcript = savedTranscript || sessionEvents
+    .filter((e) => e.type === EventType.Transcript)
+    .map((e) => {
+      const p = e.payload as { text: string; isFinal: boolean };
+      return p.isFinal ? p.text : '';
+    })
+    .filter(Boolean)
+    .join(' ');
 
   // Save to localStorage on first render of a new workflow (not viewing a saved one)
   // Strip base64 frame data to stay within localStorage's 5MB limit
@@ -125,6 +137,16 @@ export default function ResultsScreen() {
         }
         return e;
       });
+      // Extract full transcript text from session events
+      const transcript = sessionEvents
+        .filter((e) => e.type === EventType.Transcript)
+        .map((e) => {
+          const p = e.payload as { text: string; isFinal: boolean };
+          return p.isFinal ? p.text : '';
+        })
+        .filter(Boolean)
+        .join(' ');
+
       persistWorkflow({
         id: crypto.randomUUID(),
         name: workflowName || workflow.name,
@@ -132,6 +154,7 @@ export default function ResultsScreen() {
         duration_ms: durationMs,
         workflow,
         session_events: lightEvents,
+        transcript: transcript || undefined,
       });
     } catch {
       // Ignore storage errors
@@ -184,6 +207,19 @@ export default function ResultsScreen() {
     const a = document.createElement('a');
     a.href = url;
     a.download = 'session-raw.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadTranscript = () => {
+    if (!transcript) return;
+    const blob = new Blob([transcript], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'transcript.txt';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -245,7 +281,26 @@ export default function ResultsScreen() {
           >
             ↓ Download session-raw.json
           </button>
+          {transcript && (
+            <button
+              className="btn-outline"
+              onClick={handleDownloadTranscript}
+              data-testid="download-transcript-btn"
+            >
+              ↓ Download transcript.txt
+            </button>
+          )}
         </div>
+
+        {/* Transcript section */}
+        {transcript && (
+          <div className="results-section">
+            <h2 className="results-section-heading">Transcript</h2>
+            <div className="results-transcript" data-testid="results-transcript">
+              <p>{transcript}</p>
+            </div>
+          </div>
+        )}
 
         {/* Steps section */}
         <div className="results-section">

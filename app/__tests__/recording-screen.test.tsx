@@ -28,6 +28,8 @@ function renderWithContext(
     interjections: [],
     framesCaptured: 0,
     observeCallCount: 0,
+    speakCount: 0,
+    silentCount: 0,
     capturedFrames: [],
     onStop: vi.fn(),
     ...props,
@@ -66,7 +68,8 @@ describe('RecordingScreen', () => {
       expect(screen.getByTestId('rec-timer')).toHaveTextContent('00:00');
       expect(screen.getByTestId('frames-count')).toHaveTextContent('0');
       expect(screen.getByTestId('observe-count')).toHaveTextContent('0');
-      expect(screen.getByTestId('interjection-count')).toHaveTextContent('0');
+      expect(screen.getByTestId('speak-count')).toHaveTextContent('0');
+      expect(screen.getByTestId('silent-count')).toHaveTextContent('0');
     });
 
     it('increments timer every second', () => {
@@ -86,20 +89,17 @@ describe('RecordingScreen', () => {
     });
 
     it('displays correct metric counts', () => {
-      const interjections: Interjection[] = [
-        { timestamp_ms: 5000, reason: 'missing_why', message: 'Why?' },
-        { timestamp_ms: 10000, reason: 'ambiguous', message: 'Which one?' },
-      ];
-
       renderWithContext({
         framesCaptured: 42,
         observeCallCount: 15,
-        interjections,
+        speakCount: 3,
+        silentCount: 12,
       });
 
       expect(screen.getByTestId('frames-count')).toHaveTextContent('42');
       expect(screen.getByTestId('observe-count')).toHaveTextContent('15');
-      expect(screen.getByTestId('interjection-count')).toHaveTextContent('2');
+      expect(screen.getByTestId('speak-count')).toHaveTextContent('3');
+      expect(screen.getByTestId('silent-count')).toHaveTextContent('12');
     });
   });
 

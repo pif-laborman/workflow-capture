@@ -27,8 +27,10 @@ export interface TranscriptChunk {
 
 export interface ObserveRequest {
   frame: string;
+  previous_frames?: string[];
   transcript_window: string;
   seconds_since_last_interjection: number;
+  seconds_silent?: number;
   previous_interjections: string[];
   system_prompt?: string;
 }
@@ -65,4 +67,5 @@ export interface SavedWorkflow {
   duration_ms: number;
   workflow: WorkflowDocument;
   session_events: SessionEvent[];
+  transcript?: string;
 }
