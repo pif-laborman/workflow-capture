@@ -41,6 +41,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const frameHistoryRef = useRef<string[]>([]);
   const lastTranscriptLengthRef = useRef(0);
   const lastTranscriptChangeTimeRef = useRef(Date.now());
+  const silenceStartFrameRef = useRef<string | null>(null);
+  const wasUserSpeakingRef = useRef(false);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -57,14 +59,23 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const transcriptWindow = opts.getTranscriptWindow(120);
 
     // Silence detection: track how long since transcript grew
-    if (transcriptWindow.length !== lastTranscriptLengthRef.current) {
+    const isUserSpeaking = transcriptWindow.length !== lastTranscriptLengthRef.current;
+    if (isUserSpeaking) {
       lastTranscriptLengthRef.current = transcriptWindow.length;
       lastTranscriptChangeTimeRef.current = now;
+      wasUserSpeakingRef.current = true;
+      silenceStartFrameRef.current = null; // reset; will capture on next silent tick
     }
     const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
 
     // Don't interrupt the user: only observe when they've paused for 3+ seconds
     if (secondsSilent < 3) return;
+
+    // Capture the frame at the moment silence began (first tick after speech stops)
+    if (wasUserSpeakingRef.current && !silenceStartFrameRef.current) {
+      silenceStartFrameRef.current = frame;
+      wasUserSpeakingRef.current = false;
+    }
 
     const msSinceLastInterjection = lastInterjectionTimeRef.current === 0
       ? 999999
@@ -81,10 +92,21 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       ? 9999
       : Math.floor(msSinceLastInterjection / 1000);
 
+    // Build previous frames: silence-start frame first, then recent history
+    const prevFrames: string[] = [];
+    if (silenceStartFrameRef.current && silenceStartFrameRef.current !== frame) {
+      prevFrames.push(silenceStartFrameRef.current);
+    }
+    for (const h of history.slice(0, -1)) {
+      if (h !== silenceStartFrameRef.current) {
+        prevFrames.push(h);
+      }
+    }
+
     const customPrompt = getObservePrompt();
     const body: ObserveRequest = {
       frame,
-      previous_frames: history.length > 1 ? history.slice(0, -1) : undefined,
+      previous_frames: prevFrames.length > 0 ? prevFrames : undefined,
       transcript_window: transcriptWindow,
       seconds_since_last_interjection: secondsSinceLastInterjection,
       seconds_silent: secondsSilent,
@@ -146,6 +168,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     inFlightRef.current = false;
     frameHistoryRef.current = [];
     lastTranscriptLengthRef.current = 0;
+    silenceStartFrameRef.current = null;
+    wasUserSpeakingRef.current = false;
     // Start with silence timer already past the gate so the first observe can fire
     // (the intro TTS plays during this window anyway)
     lastTranscriptChangeTimeRef.current = Date.now() - 10000;

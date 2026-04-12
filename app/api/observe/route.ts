@@ -63,7 +63,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
   }
 
   if (body.previous_frames?.length) {
-    contextParts.push(`\nYou are seeing ${body.previous_frames.length + 1} screenshots in chronological order. The LAST image is the current screen. Compare them to detect what changed.`);
+    contextParts.push(`\nYou are seeing ${body.previous_frames.length + 1} screenshots in chronological order. The FIRST image is what the screen looked like when the user stopped talking. The LAST image is the current screen. Compare them to understand what happened during the silence.`);
   }
 
   // Call Claude Sonnet
