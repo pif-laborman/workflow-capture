@@ -42,19 +42,37 @@ export function useMediaCapture(): UseMediaCaptureReturn {
     setError(null);
 
     try {
-      const screen = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: 'monitor' },
-        audio: true,
-        preferCurrentTab: false,
-        selfBrowserSurface: 'exclude',
-        systemAudio: 'include',
-      } as DisplayMediaStreamOptions);
+      // Request mic FIRST so the browser prompts for it before the screen picker
+      let mic: MediaStream;
+      try {
+        mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (micErr) {
+        throw new Error(
+          `Microphone access denied: ${micErr instanceof Error ? micErr.message : String(micErr)}`
+        );
+      }
+
+      let screen: MediaStream;
+      try {
+        screen = await navigator.mediaDevices.getDisplayMedia({
+          video: { displaySurface: 'monitor' },
+          audio: true,
+          preferCurrentTab: false,
+          selfBrowserSurface: 'exclude',
+          systemAudio: 'include',
+        } as DisplayMediaStreamOptions);
+      } catch (screenErr) {
+        // If screen share fails or is cancelled, stop mic too
+        mic.getTracks().forEach((track) => track.stop());
+        throw screenErr;
+      }
 
       // Reject if user picked a tab or window instead of entire screen
       const videoTrack = screen.getVideoTracks()[0];
       const surface = videoTrack?.getSettings().displaySurface;
       if (surface && surface !== 'monitor') {
         screen.getTracks().forEach((track) => track.stop());
+        mic.getTracks().forEach((track) => track.stop());
         throw new Error(
           'Please share your entire screen, not a single tab or window.'
         );
@@ -69,17 +87,6 @@ export function useMediaCapture(): UseMediaCaptureReturn {
         videoTrack.addEventListener('ended', () => {
           stopCapture();
         });
-      }
-
-      let mic: MediaStream;
-      try {
-        mic = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (micErr) {
-        // If mic fails, stop screen share too
-        screen.getTracks().forEach((track) => track.stop());
-        throw new Error(
-          `Microphone access denied: ${micErr instanceof Error ? micErr.message : String(micErr)}`
-        );
       }
 
       screenStreamRef.current = screen;
