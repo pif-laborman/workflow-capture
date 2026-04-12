@@ -65,15 +65,17 @@ export function useEventLog() {
       : 0;
     const cutoff = now - lastNSeconds * 1000;
 
-    return eventsRef.current
-      .filter(
-        (e) =>
-          e.type === EventType.Transcript &&
-          e.timestamp_ms >= cutoff &&
-          (e.payload as TranscriptPayload).isFinal
-      )
-      .map((e) => (e.payload as TranscriptPayload).text)
-      .join(' ');
+    // Interleave transcript and interjections so Claude sees the conversation flow
+    const parts: string[] = [];
+    for (const e of eventsRef.current) {
+      if (e.timestamp_ms < cutoff) continue;
+      if (e.type === EventType.Transcript && (e.payload as TranscriptPayload).isFinal) {
+        parts.push(`[USER] ${(e.payload as TranscriptPayload).text}`);
+      } else if (e.type === EventType.Interjection) {
+        parts.push(`[CLAUDE] ${(e.payload as InterjectionPayload).message}`);
+      }
+    }
+    return parts.join('\n');
   }, []);
 
   const getPreviousInterjections = useCallback((): string[] => {

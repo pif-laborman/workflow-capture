@@ -49,9 +49,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
   const contextParts: string[] = [];
 
   if (body.transcript_window) {
-    contextParts.push(`Current transcript (last 2 minutes):\n${body.transcript_window}`);
+    contextParts.push(`Conversation log (last 2 minutes). Lines prefixed [USER] are narration, [CLAUDE] are your previous questions:\n${body.transcript_window}`);
   } else {
-    contextParts.push('Current transcript: (empty, user has not spoken yet)');
+    contextParts.push('Conversation log: (empty, user has not spoken yet)');
   }
 
   if (body.seconds_silent !== undefined && body.seconds_silent > 5) {

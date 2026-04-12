@@ -5,8 +5,8 @@ Your task is to produce a structured WorkflowDocument JSON from this event log.
 ## Instructions
 
 1. **Deduplicate steps** — If the user repeated an action or revisited a step, consolidate into a single step with the most complete description.
-2. **Resolve ambiguities** — If a clarifying question was asked during recording and the user answered it, incorporate the answer into the step description. If the question was not answered, add it to open_questions.
-3. **Surface open questions** — Any unresolved ambiguities, missing context, or implicit assumptions should appear in the open_questions array.
+2. **Match Q&A pairs** — The event log contains interjection events (questions asked during recording) and transcript events (user speech). When a transcript event follows an interjection, treat it as the answer to that question. Incorporate that answer into the relevant step description. This is critical: do NOT list a question as open if the user answered it in the transcript that followed.
+3. **Surface only truly open questions** — A question is open ONLY if no transcript after it addresses the topic. If the user answered even partially, incorporate what they said and do not repeat the question. When in doubt, it was answered.
 4. **Order steps sequentially** — Number steps in the order they should be performed, not necessarily the order they were recorded.
 5. **Be specific about UI elements** — Reference exact button names, field labels, menu paths, and URLs visible in the frames.
 
