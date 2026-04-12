@@ -16,6 +16,7 @@ function createMockOptions(overrides: Partial<UseObserveLoopOptions> = {}): UseO
     pauseRecognition: vi.fn(),
     resumeRecognition: vi.fn(),
     addInterjection: vi.fn(),
+    getPreviousInterjections: vi.fn(() => []),
     ...overrides,
   };
 }

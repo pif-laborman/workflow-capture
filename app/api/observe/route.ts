@@ -63,7 +63,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
             },
             {
               type: 'text',
-              text: `Current transcript:\n${body.transcript_window}`,
+              text: [
+                `Current transcript:\n${body.transcript_window}`,
+                body.previous_interjections?.length
+                  ? `\nYour previous questions this session (DO NOT repeat these):\n${body.previous_interjections.map((q, i) => `${i + 1}. ${q}`).join('\n')}`
+                  : '',
+              ].join(''),
             },
           ],
         },

@@ -2,7 +2,7 @@
 export const OBSERVE_INTERVAL_MS = 2000;
 
 /** Minimum cooldown between Claude interjections (ms) */
-export const COOLDOWN_MS = 10000;
+export const COOLDOWN_MS = 15000;
 
 /** How often to sample a frame from the screen capture (ms) */
 export const FRAME_INTERVAL_MS = 1000;

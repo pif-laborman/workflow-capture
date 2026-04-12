@@ -29,6 +29,7 @@ export interface ObserveRequest {
   frame: string;
   transcript_window: string;
   seconds_since_last_interjection: number;
+  previous_interjections: string[];
 }
 
 export interface ObserveResponse {

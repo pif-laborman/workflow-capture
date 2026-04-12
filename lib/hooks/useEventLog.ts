@@ -76,6 +76,12 @@ export function useEventLog() {
       .join(' ');
   }, []);
 
+  const getPreviousInterjections = useCallback((): string[] => {
+    return eventsRef.current
+      .filter((e) => e.type === EventType.Interjection)
+      .map((e) => (e.payload as InterjectionPayload).message);
+  }, []);
+
   const clear = useCallback(() => {
     eventsRef.current = [];
     setVersion((v) => v + 1);
@@ -87,6 +93,7 @@ export function useEventLog() {
     addTranscript,
     addInterjection,
     getTranscriptWindow,
+    getPreviousInterjections,
     clear,
   };
 }

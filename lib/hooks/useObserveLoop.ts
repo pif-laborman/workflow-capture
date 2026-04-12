@@ -19,6 +19,8 @@ export interface UseObserveLoopOptions {
   resumeRecognition: () => void;
   /** Add interjection to event log */
   addInterjection: (message: string, reason: string, timestamp_ms: number) => void;
+  /** Get all previous interjection messages */
+  getPreviousInterjections: () => string[];
 }
 
 export interface UseObserveLoopReturn {
@@ -52,6 +54,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       frame,
       transcript_window: transcriptWindow,
       seconds_since_last_interjection: secondsSinceLastInterjection,
+      previous_interjections: opts.getPreviousInterjections(),
     };
 
     inFlightRef.current = true;

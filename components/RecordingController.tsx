@@ -54,6 +54,7 @@ export default function RecordingController() {
     pauseRecognition: speechRecognition.pause,
     resumeRecognition: speechRecognition.resume,
     addInterjection: eventLog.addInterjection,
+    getPreviousInterjections: eventLog.getPreviousInterjections,
   });
 
   // Count frames from events
