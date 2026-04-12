@@ -36,8 +36,9 @@ function formatTime(totalSeconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function formatTimestamp(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
+function formatTimestamp(ms: number, startMs: number): string {
+  const elapsed = Math.max(0, ms - startMs);
+  const totalSeconds = Math.floor(elapsed / 1000);
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
@@ -57,6 +58,7 @@ export default function RecordingScreen({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const feedEndRef = useRef<HTMLDivElement>(null);
   const observerEndRef = useRef<HTMLDivElement>(null);
+  const startTimeRef = useRef(Date.now());
 
   // Build unified feed sorted by timestamp
   const feedItems = useMemo<FeedItem[]>(() => {
@@ -175,12 +177,12 @@ export default function RecordingScreen({
                         data-testid="feed-frame"
                       >
                         <span className="transcript-timestamp">
-                          {formatTimestamp(item.timestamp_ms)}
+                          {formatTimestamp(item.timestamp_ms, startTimeRef.current)}
                         </span>
                         <div className="frame-thumbnail">
                           <img
                             src={`data:image/jpeg;base64,${item.base64}`}
-                            alt={`Screen capture at ${formatTimestamp(item.timestamp_ms)}`}
+                            alt={`Screen capture at ${formatTimestamp(item.timestamp_ms, startTimeRef.current)}`}
                           />
                         </div>
                       </div>
@@ -193,7 +195,7 @@ export default function RecordingScreen({
                       data-testid="transcript-block"
                     >
                       <span className="transcript-timestamp">
-                        {formatTimestamp(item.timestamp_ms)}
+                        {formatTimestamp(item.timestamp_ms, startTimeRef.current)}
                       </span>
                       <span className="transcript-text">{item.text}</span>
                     </div>
@@ -235,7 +237,7 @@ export default function RecordingScreen({
                 >
                   <div className="interjection-meta">
                     <span className="interjection-timestamp">
-                      {formatTimestamp(item.timestamp_ms)}
+                      {formatTimestamp(item.timestamp_ms, startTimeRef.current)}
                     </span>
                     <span className="pill-badge pill-reason" data-testid="reason-tag">
                       {item.reason}

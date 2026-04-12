@@ -49,6 +49,8 @@ function renderWithContext(
 describe('RecordingScreen', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // Set Date.now() to 0 so test timestamps (5000, 12000, etc.) become relative offsets
+    vi.setSystemTime(0);
   });
 
   afterEach(() => {
