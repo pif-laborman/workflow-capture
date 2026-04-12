@@ -11,7 +11,7 @@ export interface UseObserveLoopOptions {
   getLatestFrame: () => string | null;
   /** Get transcript window text (from event log) */
   getTranscriptWindow: (lastNSeconds: number) => string;
-  /** TTS speak function — returns promise that resolves when speech ends */
+  /** TTS speak function - returns promise that resolves when speech ends */
   speak: (text: string) => Promise<void>;
   /** Pause speech recognition during TTS */
   pauseRecognition: () => void;
@@ -30,10 +30,14 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const [observeCallCount, setObserveCallCount] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastInterjectionTimeRef = useRef<number>(0);
+  const inFlightRef = useRef(false);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
   const tick = useCallback(async () => {
+    // Skip if a previous request is still in flight
+    if (inFlightRef.current) return;
+
     const opts = optionsRef.current;
     const frame = opts.getLatestFrame();
     if (!frame) return;
@@ -49,6 +53,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       transcript_window: transcriptWindow,
       seconds_since_last_interjection: secondsSinceLastInterjection,
     };
+
+    inFlightRef.current = true;
 
     try {
       const res = await fetch('/api/observe', {
@@ -78,6 +84,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       }
     } catch (err) {
       console.error('Observe loop fetch error:', err);
+    } finally {
+      inFlightRef.current = false;
     }
   }, []);
 
@@ -93,6 +101,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     // Reset state for new recording
     setObserveCallCount(0);
     lastInterjectionTimeRef.current = 0;
+    inFlightRef.current = false;
 
     intervalRef.current = setInterval(() => {
       tick();
