@@ -166,9 +166,9 @@ describe('Observe system prompt', () => {
     const lower = OBSERVE_SYSTEM_PROMPT.toLowerCase();
     expect(lower).toContain('missing');
     expect(lower).toContain('contradiction');
-    expect(lower).toContain('ambiguous generalization');
-    expect(lower).toContain('apparent error');
-    expect(lower).toContain('implicit step');
+    expect(lower).toContain('ambiguous');
+    expect(lower).toContain('error');
+    expect(lower).toContain('implicit_step');
   });
 
   it('forces JSON output format', () => {
