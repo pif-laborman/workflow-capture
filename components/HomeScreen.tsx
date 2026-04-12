@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { AppState, SavedWorkflow } from '@/lib/types';
 import { useAppState } from '@/lib/state';
 import { getWorkflows } from '@/lib/storage';
+import PromptEditor from '@/components/PromptEditor';
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -46,6 +47,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const [workflows, setWorkflows] = useState<SavedWorkflow[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
 
   useEffect(() => {
     setWorkflows(getWorkflows());
@@ -65,8 +67,17 @@ export default function HomeScreen() {
   if (workflows.length === 0) {
     return (
       <div className="home-screen" data-testid="home-screen">
+        {showPromptEditor && <PromptEditor onClose={() => setShowPromptEditor(false)} />}
         <div className="home-empty" data-testid="home-empty">
           <h1 className="home-brand">workflow capture</h1>
+          <button
+            className="prompt-settings-btn"
+            onClick={() => setShowPromptEditor(true)}
+            data-testid="settings-btn-empty"
+            aria-label="Edit observer prompt"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6.5 1.5a1.5 1.5 0 013 0v.3a1.5 1.5 0 001 1.42l.26-.15a1.5 1.5 0 012.6 1.5l-.15.26a1.5 1.5 0 00.37 1.72h.3a1.5 1.5 0 010 3h-.3a1.5 1.5 0 00-1.42 1l.15.26a1.5 1.5 0 01-1.5 2.6l-.26-.15a1.5 1.5 0 00-1.72.37v.3a1.5 1.5 0 01-3 0v-.3a1.5 1.5 0 00-1-1.42l-.26.15a1.5 1.5 0 01-2.6-1.5l.15-.26a1.5 1.5 0 00-.37-1.72h-.3a1.5 1.5 0 010-3h.3a1.5 1.5 0 001.42-1l-.15-.26a1.5 1.5 0 011.5-2.6l.26.15a1.5 1.5 0 001.72-.37v-.3z" stroke="currentColor" strokeWidth="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.2"/></svg>
+          </button>
           <p className="home-empty-message">No workflows yet</p>
           <button
             className="btn-primary"
@@ -85,9 +96,18 @@ export default function HomeScreen() {
 
   return (
     <div className="home-screen" data-testid="home-screen">
+      {showPromptEditor && <PromptEditor onClose={() => setShowPromptEditor(false)} />}
       <header className="home-header">
         <div className="home-header-top">
           <h1 className="home-brand">workflow capture</h1>
+          <button
+            className="prompt-settings-btn"
+            onClick={() => setShowPromptEditor(true)}
+            data-testid="settings-btn"
+            aria-label="Edit observer prompt"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6.5 1.5a1.5 1.5 0 013 0v.3a1.5 1.5 0 001 1.42l.26-.15a1.5 1.5 0 012.6 1.5l-.15.26a1.5 1.5 0 00.37 1.72h.3a1.5 1.5 0 010 3h-.3a1.5 1.5 0 00-1.42 1l.15.26a1.5 1.5 0 01-1.5 2.6l-.26-.15a1.5 1.5 0 00-1.72.37v.3a1.5 1.5 0 01-3 0v-.3a1.5 1.5 0 00-1-1.42l-.26.15a1.5 1.5 0 01-2.6-1.5l.15-.26a1.5 1.5 0 00-.37-1.72h-.3a1.5 1.5 0 010-3h.3a1.5 1.5 0 001.42-1l-.15-.26a1.5 1.5 0 011.5-2.6l.26.15a1.5 1.5 0 001.72-.37v-.3z" stroke="currentColor" strokeWidth="1.2"/><circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.2"/></svg>
+          </button>
         </div>
         <div className="home-header-row">
           <div>

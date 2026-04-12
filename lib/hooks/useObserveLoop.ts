@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { OBSERVE_INTERVAL_MS } from '@/lib/constants';
 import { ObserveRequest, ObserveResponse } from '@/lib/types';
+import { getObservePrompt } from '@/lib/storage';
 
 export interface UseObserveLoopOptions {
   /** Whether recording is currently active */
@@ -50,11 +51,13 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       ? 9999
       : Math.floor((now - lastInterjectionTimeRef.current) / 1000);
 
+    const customPrompt = getObservePrompt();
     const body: ObserveRequest = {
       frame,
       transcript_window: transcriptWindow,
       seconds_since_last_interjection: secondsSinceLastInterjection,
       previous_interjections: opts.getPreviousInterjections(),
+      ...(customPrompt ? { system_prompt: customPrompt } : {}),
     };
 
     inFlightRef.current = true;

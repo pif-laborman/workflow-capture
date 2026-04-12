@@ -1,6 +1,7 @@
 import { SavedWorkflow } from './types';
 
 const STORAGE_KEY = 'workflow-capture-sessions';
+const PROMPT_KEY = 'workflow-capture-observe-prompt';
 
 export function saveWorkflow(workflow: SavedWorkflow): void {
   const existing = getWorkflows();
@@ -28,4 +29,20 @@ export function getWorkflow(id: string): SavedWorkflow | null {
 export function deleteWorkflow(id: string): void {
   const workflows = getWorkflows().filter(w => w.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(workflows));
+}
+
+export function getObservePrompt(): string | null {
+  try {
+    return localStorage.getItem(PROMPT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setObservePrompt(prompt: string): void {
+  localStorage.setItem(PROMPT_KEY, prompt);
+}
+
+export function clearObservePrompt(): void {
+  localStorage.removeItem(PROMPT_KEY);
 }

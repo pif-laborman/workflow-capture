@@ -1136,3 +1136,205 @@ a {
   font-size: var(--small);
   color: var(--text-tertiary);
 }
+
+/* ==========================================================================
+   Prompt Editor Modal
+   ========================================================================== */
+
+.home-header-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.prompt-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+              border-color 200ms cubic-bezier(0.23, 1, 0.32, 1),
+              transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.prompt-settings-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-tertiary);
+}
+
+.prompt-settings-btn:active {
+  transform: scale(0.95);
+}
+
+.prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 10, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: var(--space-6);
+  animation: prompt-backdrop-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes prompt-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.prompt-modal {
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  width: 100%;
+  max-width: 680px;
+  max-height: calc(100vh - var(--space-12));
+  display: flex;
+  flex-direction: column;
+  animation: prompt-modal-in 250ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes prompt-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.prompt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.prompt-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.prompt-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+}
+
+.prompt-badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-weight: 500;
+}
+
+.prompt-badge-default {
+  background: var(--bg-warm);
+  color: var(--text-tertiary);
+}
+
+.prompt-badge-custom {
+  background: rgba(3, 169, 126, 0.1);
+  color: var(--color-success);
+}
+
+.prompt-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-size: var(--text-xl);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.prompt-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+}
+
+.prompt-description {
+  padding: var(--space-4) var(--space-6) 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.prompt-editor-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-4) var(--space-6);
+}
+
+.prompt-textarea {
+  width: 100%;
+  height: 360px;
+  padding: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  color: var(--text-primary);
+  background: var(--bg-warm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+  outline: none;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.prompt-textarea:focus {
+  border-color: var(--text-tertiary);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.04);
+}
+
+.prompt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--border);
+}
+
+.prompt-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.prompt-meta-sep {
+  color: var(--border);
+}
+
+.prompt-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-backdrop { animation: none; }
+  .prompt-modal { animation: none; }
+}

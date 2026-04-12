@@ -48,7 +48,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
     const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 256,
-      system: OBSERVE_SYSTEM_PROMPT,
+      system: body.system_prompt || OBSERVE_SYSTEM_PROMPT,
       messages: [
         {
           role: 'user',

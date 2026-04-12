@@ -30,6 +30,7 @@ export interface ObserveRequest {
   transcript_window: string;
   seconds_since_last_interjection: number;
   previous_interjections: string[];
+  system_prompt?: string;
 }
 
 export interface ObserveResponse {
