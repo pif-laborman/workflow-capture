@@ -149,8 +149,11 @@ describe('useObserveLoop', () => {
 
     await act(async () => {
       vi.advanceTimersByTime(1000);
-      // Flush all microtasks
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      // Advance past the 500ms pre-play pause
+      vi.advanceTimersByTime(600);
       await Promise.resolve();
       await Promise.resolve();
     });

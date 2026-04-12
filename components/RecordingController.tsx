@@ -25,15 +25,28 @@ export default function RecordingController() {
   const tts = useTTS();
   const eventLog = useEventLog();
 
-  // Interrupt: cancel TTS when user starts speaking
+  // Interrupt: cancel TTS when user starts speaking (watch both interim and final)
   const prevChunkCountRef = useRef(0);
+  const prevInterimRef = useRef('');
   useEffect(() => {
+    if (!tts.isSpeaking) {
+      prevChunkCountRef.current = speechRecognition.transcriptChunks.length;
+      prevInterimRef.current = speechRecognition.interimText;
+      return;
+    }
+    // Check final chunks
     const currentCount = speechRecognition.transcriptChunks.length;
-    if (currentCount > prevChunkCountRef.current && tts.isSpeaking) {
+    if (currentCount > prevChunkCountRef.current) {
+      tts.cancel();
+      prevChunkCountRef.current = currentCount;
+      return;
+    }
+    // Check interim text (arrives faster from Deepgram)
+    if (speechRecognition.interimText && speechRecognition.interimText !== prevInterimRef.current) {
       tts.cancel();
     }
-    prevChunkCountRef.current = currentCount;
-  }, [speechRecognition.transcriptChunks.length, tts]);
+    prevInterimRef.current = speechRecognition.interimText;
+  }, [speechRecognition.transcriptChunks.length, speechRecognition.interimText, tts]);
 
   // Frame sampler — wired to event log
   const { latestFrame } = useFrameSampler(

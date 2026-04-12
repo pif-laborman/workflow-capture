@@ -132,14 +132,28 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       setObserveCallCount((c) => c + 1);
 
       if (data.speak && data.message) {
-        setSpeakCount((c) => c + 1);
-        lastInterjectionTimeRef.current = Date.now();
-        opts.addInterjection(data.message, data.reason, Date.now());
-        // Speak without muting mic (user can interrupt via transcript detection)
-        try {
-          await opts.speak(data.message);
-        } catch (err) {
-          console.error('TTS error during interjection:', err);
+        // Pre-play check: has the user started speaking since we made the API call?
+        const currentTranscript = opts.getTranscriptWindow(120);
+        if (currentTranscript.length !== transcriptWindow.length) {
+          // User started talking while we were waiting for Claude. Skip this interjection.
+          setSilentCount((c) => c + 1);
+        } else {
+          // Brief pause to let Deepgram catch up, then re-check
+          await new Promise((r) => setTimeout(r, 500));
+          const recheckTranscript = opts.getTranscriptWindow(120);
+          if (recheckTranscript.length !== transcriptWindow.length) {
+            // User started talking during the pause. Skip.
+            setSilentCount((c) => c + 1);
+          } else {
+            setSpeakCount((c) => c + 1);
+            lastInterjectionTimeRef.current = Date.now();
+            opts.addInterjection(data.message, data.reason, Date.now());
+            try {
+              await opts.speak(data.message);
+            } catch (err) {
+              console.error('TTS error during interjection:', err);
+            }
+          }
         }
       } else {
         setSilentCount((c) => c + 1);
