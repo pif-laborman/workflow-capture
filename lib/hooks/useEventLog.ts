@@ -5,6 +5,7 @@ import { EventType, SessionEvent } from '@/lib/types';
 
 export interface FramePayload {
   frame_base64: string;
+  significant: boolean;
 }
 
 export interface TranscriptPayload {
@@ -22,11 +23,11 @@ export function useEventLog() {
   // Counter to trigger re-renders when events change
   const [, setVersion] = useState(0);
 
-  const addFrame = useCallback((base64: string, timestamp_ms: number) => {
+  const addFrame = useCallback((base64: string, timestamp_ms: number, significant = false) => {
     const event: SessionEvent = {
       type: EventType.Frame,
       timestamp_ms,
-      payload: { frame_base64: base64 } as FramePayload,
+      payload: { frame_base64: base64, significant } as FramePayload,
     };
     eventsRef.current.push(event);
     setVersion((v) => v + 1);

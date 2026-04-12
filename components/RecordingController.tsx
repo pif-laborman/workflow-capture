@@ -33,7 +33,7 @@ export default function RecordingController() {
     mediaCapture.isCapturing,
     {
       onFrame: (frame) => {
-        eventLog.addFrame(frame.data, frame.timestamp_ms);
+        eventLog.addFrame(frame.data, frame.timestamp_ms, frame.significant);
       },
     }
   );
@@ -60,9 +60,9 @@ export default function RecordingController() {
     (e) => e.type === EventType.Frame
   ).length;
 
-  // Build captured frames array for feed
+  // Build captured frames array for feed (only significant frames)
   const capturedFrames: CapturedFrame[] = eventLog.events
-    .filter((e) => e.type === EventType.Frame)
+    .filter((e) => e.type === EventType.Frame && (e.payload as FramePayload).significant)
     .map((e) => {
       const p = e.payload as FramePayload;
       return {

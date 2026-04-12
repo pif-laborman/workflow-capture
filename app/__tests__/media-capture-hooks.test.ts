@@ -286,19 +286,19 @@ describe('useFrameSampler', () => {
     // Reset call counts after initial sample
     mockDrawImage.mockClear();
 
-    // Advance by one interval
+    // Advance by one interval (drawImage called for full canvas + thumb canvas = 2 per frame)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(FRAME_INTERVAL_MS);
     });
 
-    expect(mockDrawImage).toHaveBeenCalledTimes(1);
+    expect(mockDrawImage).toHaveBeenCalledTimes(2);
 
     // Advance another interval
     await act(async () => {
       await vi.advanceTimersByTimeAsync(FRAME_INTERVAL_MS);
     });
 
-    expect(mockDrawImage).toHaveBeenCalledTimes(2);
+    expect(mockDrawImage).toHaveBeenCalledTimes(4);
   });
 
   it('calls onFrame callback with timestamped frame', async () => {
@@ -314,10 +314,12 @@ describe('useFrameSampler', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(onFrame).toHaveBeenCalledWith({
-      data: 'AAAA',
-      timestamp_ms: 1234567890,
-    } satisfies TimestampedFrame);
+    expect(onFrame).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: 'AAAA',
+        timestamp_ms: 1234567890,
+      })
+    );
   });
 
   it('cleans up interval when capturing stops', async () => {
