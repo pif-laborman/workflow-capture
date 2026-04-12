@@ -44,7 +44,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const frame = opts.getLatestFrame();
     if (!frame) return;
 
-    const transcriptWindow = opts.getTranscriptWindow(30);
+    const transcriptWindow = opts.getTranscriptWindow(120);
     const now = Date.now();
     const secondsSinceLastInterjection = lastInterjectionTimeRef.current === 0
       ? 9999
