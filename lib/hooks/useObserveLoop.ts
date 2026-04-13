@@ -16,30 +16,13 @@ const MAX_RETRIES = 1;
 /** Retry delay (ms) */
 const RETRY_DELAY_MS = 1000;
 
-/** Patterns that indicate the user is talking directly to the observer */
-const DIRECT_QUESTION_PATTERNS = [
-  /any.*questions/i,
-  /do\s*you\s*(have|see|notice|think|understand|follow)/i,
-  /what\s*do\s*you\s*think/i,
-  /does\s*that\s*make\s*sense/i,
-  /anything\s*(else|unclear|you\s*want)/i,
-  /is\s*that\s*clear/i,
-  /can\s*you\s*(see|tell|explain)/i,
-  /your\s*thoughts/i,
-  /\bclaude\b/i,
-  /\bduvo\b/i,
-  /what\s*should\s*(i|we)/i,
-  /where\s*should\s*(i|we)/i,
-  /am\s*i\s*missing/i,
-  /got\s*it\?/i,
-  /you\s*follow/i,
-  /are\s*you\s*(there|ready|listening|watching)/i,
-  /\bhello\b.*\?/i,
-  /\bhey\b.*\?/i,
-  /should\s*(i|we)\s*(start|begin|go)/i,
-  /let'?s\s*(start|begin|go)/i,
-  /ready\s*to\s*(start|begin|go)/i,
-];
+/** Check if the user's last utterance is a question (ends with ?) */
+function isUserAskingQuestion(transcriptWindow: string): boolean {
+  const userLines = transcriptWindow.split('\n').filter((l) => l.startsWith('[USER]'));
+  if (userLines.length === 0) return false;
+  const lastLine = userLines[userLines.length - 1].trim();
+  return lastLine.endsWith('?');
+}
 
 /** Debounce delay: fire observe this many ms after last transcript chunk */
 const SPEECH_END_DEBOUNCE_MS = 1500;
@@ -122,11 +105,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     // Update known length (for external tracking, not silence calc)
     knownTranscriptLengthRef.current = transcriptWindow.length;
 
-    // Extract only the last [USER] line(s) for direct question detection
-    // (avoids false positives from [CLAUDE] text containing question words)
-    const userLines = transcriptWindow.split('\n').filter((l) => l.startsWith('[USER]'));
-    const lastUserText = userLines.slice(-2).join(' ');
-    const userAskedDirectly = DIRECT_QUESTION_PATTERNS.some((p) => p.test(lastUserText));
+    const userAskedDirectly = isUserAskingQuestion(transcriptWindow);
 
     // Track frame history
     const history = frameHistoryRef.current;
