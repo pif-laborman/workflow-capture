@@ -18,7 +18,7 @@ const RETRY_DELAY_MS = 1000;
 
 /** Patterns that indicate the user is talking directly to Claude */
 const DIRECT_QUESTION_PATTERNS = [
-  /any\s*questions/i,
+  /any.*questions/i,
   /do\s*you\s*(have|see|notice|think)/i,
   /what\s*do\s*you\s*think/i,
   /does\s*that\s*make\s*sense/i,
@@ -29,6 +29,8 @@ const DIRECT_QUESTION_PATTERNS = [
   /\bclaude\b/i,
   /what\s*should\s*i/i,
   /am\s*i\s*missing/i,
+  /got\s*it\?/i,
+  /you\s*follow/i,
 ];
 
 export interface UseObserveLoopOptions {
@@ -104,15 +106,23 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
 
     // For proactive polls: only fire if user has been genuinely silent
+    // AND Claude hasn't spoken recently (avoids rapid double-responses)
     if (trigger === 'proactive') {
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
+      const sinceLast = lastSpeakTimeRef.current === 0
+        ? 9999
+        : Math.floor((now - lastSpeakTimeRef.current) / 1000);
+      if (sinceLast < PROACTIVE_SILENCE_THRESHOLD) return;
     }
 
     // Update known length (for external tracking, not silence calc)
     knownTranscriptLengthRef.current = transcriptWindow.length;
 
-    const lastChunk = transcriptWindow.slice(-200);
-    const userAskedDirectly = DIRECT_QUESTION_PATTERNS.some((p) => p.test(lastChunk));
+    // Extract only the last [USER] line(s) for direct question detection
+    // (avoids false positives from [CLAUDE] text containing question words)
+    const userLines = transcriptWindow.split('\n').filter((l) => l.startsWith('[USER]'));
+    const lastUserText = userLines.slice(-2).join(' ');
+    const userAskedDirectly = DIRECT_QUESTION_PATTERNS.some((p) => p.test(lastUserText));
 
     // Track frame history
     const history = frameHistoryRef.current;
