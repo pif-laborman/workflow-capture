@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 const DEEPGRAM_PROJECT_ID = process.env.DEEPGRAM_PROJECT_ID || 'ae73a44f-cac9-40af-9c43-5bb9a9a6019b';
 
 export async function GET(): Promise<Response> {
