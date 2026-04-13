@@ -75,17 +75,28 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
    * `trigger` indicates what caused the call (for logging/tuning).
    */
   const fireObserve = useCallback(async (trigger: 'utterance_end' | 'proactive') => {
+    console.log(`[observe] fireObserve called, trigger=${trigger}`);
+
     // Don't stack concurrent requests
-    if (inFlightRef.current) return;
+    if (inFlightRef.current) {
+      console.log('[observe] skipped: request in flight');
+      return;
+    }
 
     const opts = optionsRef.current;
     const frame = opts.getLatestFrame();
-    if (!frame) return;
+    if (!frame) {
+      console.log('[observe] skipped: no frame available');
+      return;
+    }
 
     const now = Date.now();
 
     // Enforce minimum gap between calls
-    if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) return;
+    if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) {
+      console.log(`[observe] skipped: too soon (${now - lastObserveTimeRef.current}ms since last)`);
+      return;
+    }
 
     const transcriptWindow = opts.getTranscriptWindow(120);
 
@@ -164,10 +175,12 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     }
 
     if (!data) {
+      console.error('[observe] all retries failed, no data');
       inFlightRef.current = false;
       return;
     }
 
+    console.log(`[observe] response: speak=${data.speak}, message="${data.message?.slice(0, 80)}", reason=${data.reason}`);
     setObserveCallCount((c) => c + 1);
 
     if (data.speak && data.message) {
