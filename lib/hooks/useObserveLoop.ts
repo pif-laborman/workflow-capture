@@ -29,6 +29,13 @@ const QUESTION_DEBOUNCE_MS = 300;
 /** Debounce delay after answering Claude's question (faster than proactive, slower than question) */
 const REPLY_DEBOUNCE_MS = 1500;
 
+/** Relative timestamp for structured logging */
+let sessionStartMs = 0;
+function t(): string {
+  if (!sessionStartMs) return '[0.0s]';
+  return `[${((Date.now() - sessionStartMs) / 1000).toFixed(1)}s]`;
+}
+
 export interface UseObserveLoopOptions {
   /** Whether recording is currently active */
   isRecording: boolean;
@@ -63,8 +70,6 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const frameHistoryRef = useRef<string[]>([]);
   const lastObserveTimeRef = useRef(0);
   const lastSpeakTimeRef = useRef(0);
-  // Track transcript length independently so we can detect silence
-  // without resetting on every observe call
   const knownTranscriptLengthRef = useRef(0);
   const lastTranscriptGrowthRef = useRef(Date.now());
   const proactiveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,40 +81,39 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
    * Core observe call. Sends frame + transcript to Claude and handles response.
    */
   const fireObserve = useCallback(async (trigger: 'utterance_end' | 'proactive') => {
-    console.log(`[observe] fireObserve trigger=${trigger}`);
-    if (inFlightRef.current) { console.log('[observe] skipped: in flight'); return; }
+    if (inFlightRef.current) {
+      console.log(`${t()} observe: skipped (in flight) trigger=${trigger}`);
+      return;
+    }
 
     const opts = optionsRef.current;
     const frame = opts.getLatestFrame();
-    if (!frame) { console.log('[observe] skipped: no frame'); return; }
+    if (!frame) return;
 
     const now = Date.now();
-
-    // Enforce minimum gap between calls
-    if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) return;
+    const gapMs = now - lastObserveTimeRef.current;
+    if (gapMs < MIN_OBSERVE_GAP_MS) return;
 
     const transcriptWindow = opts.getTranscriptWindow(120);
-    console.log(`[observe] transcript=${transcriptWindow.length}ch: "${transcriptWindow.slice(-150)}"`);
-
-    // Silence = time since last transcript growth (tracked externally)
     const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
 
-    // For proactive polls: only fire if user has been genuinely silent
-    // AND Claude hasn't spoken in the last 5s (avoids TTS collision)
-    // AND transcript has changed since last observe call (no duplicate questions)
+    // Proactive poll guards
     if (trigger === 'proactive') {
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
       const secSinceSpoke = lastSpeakTimeRef.current === 0
         ? 9999
         : Math.floor((now - lastSpeakTimeRef.current) / 1000);
-      if (secSinceSpoke < 5) return;
+      if (secSinceSpoke < 5) {
+        console.log(`${t()} proactive: skipped (spoke ${secSinceSpoke}s ago, need 5s)`);
+        return;
+      }
       if (transcriptWindow.length === knownTranscriptLengthRef.current) return;
     }
 
-    // Update known length (for external tracking, not silence calc)
     knownTranscriptLengthRef.current = transcriptWindow.length;
-
     const userAskedDirectly = isUserAskingQuestion(transcriptWindow);
+
+    console.log(`${t()} observe: firing trigger=${trigger} silent=${secondsSilent}s direct=${userAskedDirectly} transcript=${transcriptWindow.length}ch`);
 
     // Track frame history
     const history = frameHistoryRef.current;
@@ -118,7 +122,6 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       history.shift();
     }
 
-    // For direct questions, skip previous frames to reduce API latency
     const prevFrames = userAskedDirectly ? [] : history.slice(0, -1);
     const secondsSinceLastInterjection = lastSpeakTimeRef.current === 0
       ? 9999
@@ -138,6 +141,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     inFlightRef.current = true;
     lastObserveTimeRef.current = now;
+    const apiStart = Date.now();
 
     let retries = 0;
     let data: ObserveResponse | null = null;
@@ -168,26 +172,32 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       }
     }
 
+    const apiMs = Date.now() - apiStart;
+
     if (!data) {
+      console.log(`${t()} observe: API failed after ${apiMs}ms (${retries} retries)`);
       inFlightRef.current = false;
       return;
     }
 
     setObserveCallCount((c) => c + 1);
-    console.log(`[observe] response: speak=${data.speak} message="${data.message?.slice(0, 60)}"`);
+    console.log(`${t()} observe: API ${apiMs}ms speak=${data.speak} "${data.message?.slice(0, 50)}"`);
 
     if (data.speak && data.message) {
       setSpeakCount((c) => c + 1);
       opts.addInterjection(data.message, data.reason, Date.now());
+      const ttsStart = Date.now();
       try {
         const completed = await opts.speak(data.message);
-        // Only apply cooldown if Claude finished the full question.
-        // If interrupted mid-sentence, let the proactive poll fire sooner.
+        const ttsMs = Date.now() - ttsStart;
         if (completed) {
+          console.log(`${t()} tts: completed ${ttsMs}ms`);
           lastSpeakTimeRef.current = Date.now();
+        } else {
+          console.log(`${t()} tts: cancelled after ${ttsMs}ms`);
         }
       } catch {
-        // TTS failed; interjection already logged in event log
+        console.log(`${t()} tts: error after ${Date.now() - ttsStart}ms`);
       }
     } else {
       setSilentCount((c) => c + 1);
@@ -197,13 +207,10 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   }, []);
 
   /**
-   * Called on each final transcript chunk. Resets a debounce timer:
-   * if no new transcript arrives within SPEECH_END_DEBOUNCE_MS,
-   * fires the observe call (user finished speaking).
+   * Called on each final transcript chunk. Sets debounce timers based on context.
    */
   const noteTranscriptArrival = useCallback((chunkText: string) => {
     lastTranscriptGrowthRef.current = Date.now();
-    // Clear existing timer
     if (speechEndTimerRef.current) {
       clearTimeout(speechEndTimerRef.current);
       speechEndTimerRef.current = null;
@@ -211,28 +218,25 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     const isQuestion = chunkText.trim().endsWith('?');
     if (isQuestion) {
-      // User asked a question: fast response
+      console.log(`${t()} debounce: question detected, ${QUESTION_DEBOUNCE_MS}ms timer`);
       speechEndTimerRef.current = setTimeout(() => {
         fireObserve('utterance_end');
       }, QUESTION_DEBOUNCE_MS);
       return;
     }
 
-    // Check if the user is replying to Claude's last question.
-    // If so, use a shorter debounce than the proactive poll so the
-    // conversation flows naturally (Claude asks, user answers, Claude follows up).
+    // Check if replying to Claude's last question
     const transcript = optionsRef.current.getTranscriptWindow(120);
     const lines = transcript.split('\n');
-    // Find the last [CLAUDE] line and check if it's recent (near the end)
     const lastClaudeIdx = lines.findLastIndex((l) => l.startsWith('[CLAUDE]'));
     const lastUserIdx = lines.findLastIndex((l) => l.startsWith('[USER]'));
     if (lastClaudeIdx >= 0 && lastUserIdx > lastClaudeIdx) {
-      // User spoke after Claude's last question: this is a reply
+      console.log(`${t()} debounce: reply detected, ${REPLY_DEBOUNCE_MS}ms timer`);
       speechEndTimerRef.current = setTimeout(() => {
         fireObserve('utterance_end');
       }, REPLY_DEBOUNCE_MS);
     }
-    // Otherwise: pure narration, no timer. Proactive poll handles it.
+    // Otherwise: narration, no timer. Proactive poll handles it.
   }, [fireObserve]);
 
   // Background proactive poll for long silences
@@ -246,6 +250,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     }
 
     // Reset state for new recording
+    sessionStartMs = Date.now();
     setObserveCallCount(0);
     setSpeakCount(0);
     setSilentCount(0);

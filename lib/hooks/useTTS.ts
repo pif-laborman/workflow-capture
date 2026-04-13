@@ -43,7 +43,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
       abortRef.current = controller;
 
       try {
-        // Retry once on 502 (ElevenLabs transient failures / rate limits)
+        const fetchStart = Date.now();
         let res: Response | null = null;
         for (let attempt = 0; attempt < 2; attempt++) {
           if (controller.signal.aborted) { resolve(false); return; }
@@ -59,11 +59,12 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         }
 
         if (!res || !res.ok || controller.signal.aborted) {
-          console.warn('TTS: API returned', res?.status, '- skipping interjection');
+          console.warn(`TTS: API ${res?.status} after ${Date.now() - fetchStart}ms`);
           resolve(false);
           return;
         }
 
+        console.log(`TTS: fetch ${Date.now() - fetchStart}ms`);
         const blob = await res.blob();
         if (controller.signal.aborted) {
           resolve(false);

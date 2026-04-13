@@ -68,12 +68,14 @@ export default function RecordingController() {
     // Check final chunks
     const currentCount = speechRecognition.transcriptChunks.length;
     if (currentCount > prevChunkCountRef.current) {
+      console.log('[interrupt] user final chunk while TTS playing, cancelling');
       tts.cancel();
       prevChunkCountRef.current = currentCount;
       return;
     }
     // Check interim text (arrives faster from Deepgram)
     if (speechRecognition.interimText && speechRecognition.interimText !== prevInterimRef.current) {
+      console.log('[interrupt] user interim speech while TTS playing, cancelling');
       tts.cancel();
     }
     prevInterimRef.current = speechRecognition.interimText;
