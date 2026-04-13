@@ -116,6 +116,9 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const lastChunk = transcriptWindow.slice(-200);
     const userAskedDirectly = DIRECT_QUESTION_PATTERNS.some((p) => p.test(lastChunk));
 
+    console.log(`[observe] transcript (${transcriptWindow.length} chars): "${transcriptWindow.slice(-300)}"`);
+    console.log(`[observe] userAskedDirectly=${userAskedDirectly}, secondsSilent=${secondsSilent}`);
+
     // Track frame history
     const history = frameHistoryRef.current;
     history.push(frame);
