@@ -113,7 +113,7 @@ export default function RecordingController() {
   useEffect(() => {
     speechRecognition.onFinalTranscript((chunk) => {
       addTranscriptRef.current(chunk);
-      noteArrivalRef.current();
+      noteArrivalRef.current(chunk.text);
     });
   }, [speechRecognition.onFinalTranscript]);
 

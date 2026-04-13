@@ -24,8 +24,10 @@ function isUserAskingQuestion(transcriptWindow: string): boolean {
   return lastLine.endsWith('?');
 }
 
-/** Debounce delay: fire observe this many ms after last transcript chunk */
-const SPEECH_END_DEBOUNCE_MS = 1500;
+/** Debounce delay after narration (longer to avoid interrupting) */
+const NARRATION_DEBOUNCE_MS = 2500;
+/** Debounce delay after a question (shorter for quick response) */
+const QUESTION_DEBOUNCE_MS = 300;
 
 export interface UseObserveLoopOptions {
   /** Whether recording is currently active */
@@ -50,7 +52,7 @@ export interface UseObserveLoopReturn {
   /** Number of times Claude chose silence */
   silentCount: number;
   /** Call when new transcript arrives (resets debounce timer + silence tracking) */
-  noteTranscriptArrival: () => void;
+  noteTranscriptArrival: (chunkText: string) => void;
 }
 
 export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopReturn {
@@ -193,16 +195,18 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
    * if no new transcript arrives within SPEECH_END_DEBOUNCE_MS,
    * fires the observe call (user finished speaking).
    */
-  const noteTranscriptArrival = useCallback(() => {
+  const noteTranscriptArrival = useCallback((chunkText: string) => {
     lastTranscriptGrowthRef.current = Date.now();
     // Clear existing timer
     if (speechEndTimerRef.current) {
       clearTimeout(speechEndTimerRef.current);
     }
-    // Set new debounce timer
+    // Questions get near-instant response; narration gets longer delay to avoid interrupting
+    const isQuestion = chunkText.trim().endsWith('?');
+    const delay = isQuestion ? QUESTION_DEBOUNCE_MS : NARRATION_DEBOUNCE_MS;
     speechEndTimerRef.current = setTimeout(() => {
       fireObserve('utterance_end');
-    }, SPEECH_END_DEBOUNCE_MS);
+    }, delay);
   }, [fireObserve]);
 
   // Background proactive poll for long silences
