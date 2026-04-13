@@ -89,8 +89,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) return;
 
     const transcriptWindow = opts.getTranscriptWindow(120);
-    const transcriptLenAtCallStart = transcriptWindow.length;
-    console.log(`[observe] transcript=${transcriptLenAtCallStart}ch: "${transcriptWindow.slice(-150)}"`);
+    console.log(`[observe] transcript=${transcriptWindow.length}ch: "${transcriptWindow.slice(-150)}"`);
 
     // Silence = time since last transcript growth (tracked externally)
     const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
@@ -178,20 +177,11 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     if (data.speak && data.message) {
       setSpeakCount((c) => c + 1);
       lastSpeakTimeRef.current = Date.now();
-      // Always add to event log (visible as text in feed)
       opts.addInterjection(data.message, data.reason, Date.now());
-
-      // Staleness check: has the user spoken since we started this call?
-      // If so, they may have already answered; show as text only, skip audio.
-      const currentLen = opts.getTranscriptWindow(120).length;
-      if (currentLen > transcriptLenAtCallStart) {
-        console.log('[observe] user spoke during API call, skipping TTS (text only)');
-      } else {
-        try {
-          await opts.speak(data.message);
-        } catch {
-          // TTS failed; interjection already logged in event log
-        }
+      try {
+        await opts.speak(data.message);
+      } catch {
+        // TTS failed; interjection already logged in event log
       }
     } else {
       setSilentCount((c) => c + 1);
