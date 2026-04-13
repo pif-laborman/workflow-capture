@@ -42,16 +42,23 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
       abortRef.current = controller;
 
       try {
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-          signal: controller.signal,
-        });
+        // Retry once on 502 (ElevenLabs transient failures / rate limits)
+        let res: Response | null = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (controller.signal.aborted) { resolve(); return; }
+          res = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+            signal: controller.signal,
+          });
+          if (res.ok || res.status !== 502) break;
+          console.warn(`TTS: 502 on attempt ${attempt + 1}, retrying...`);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
 
-        if (!res.ok || controller.signal.aborted) {
-          // TTS failed; skip this interjection silently
-          console.warn('TTS: API returned', res.status, '- skipping interjection');
+        if (!res || !res.ok || controller.signal.aborted) {
+          console.warn('TTS: API returned', res?.status, '- skipping interjection');
           resolve();
           return;
         }
