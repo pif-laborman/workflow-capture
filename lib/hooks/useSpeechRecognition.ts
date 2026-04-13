@@ -11,6 +11,8 @@ interface UseSpeechRecognitionReturn {
   transcriptChunks: TranscriptChunk[];
   interimText: string;
   isListening: boolean;
+  /** Register a callback fired when Deepgram detects end-of-utterance */
+  onUtteranceEnd: (cb: () => void) => void;
 }
 
 interface DeepgramResult {
@@ -28,6 +30,7 @@ const DEEPGRAM_PARAMS = [
   'language=en',
   'smart_format=true',
   'interim_results=true',
+  'utterance_end_ms=1500',
   'endpointing=300',
   'encoding=linear16',
   'sample_rate=16000',
@@ -80,6 +83,11 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const audioCleanupRef = useRef<(() => void) | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const activeRef = useRef(false);
+  const utteranceEndCbRef = useRef<(() => void) | null>(null);
+
+  const onUtteranceEnd = useCallback((cb: () => void) => {
+    utteranceEndCbRef.current = cb;
+  }, []);
 
   const cleanupConnection = useCallback(() => {
     if (wsRef.current) {
@@ -144,6 +152,13 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         ws.onmessage = (event) => {
           try {
             const msg = JSON.parse(event.data);
+
+            // Deepgram fires UtteranceEnd when it detects end-of-speech
+            if (msg.type === 'UtteranceEnd') {
+              utteranceEndCbRef.current?.();
+              return;
+            }
+
             const result: DeepgramResult = msg;
             const transcript = result.channel?.alternatives?.[0]?.transcript || '';
 
@@ -224,5 +239,6 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     transcriptChunks,
     interimText,
     isListening,
+    onUtteranceEnd,
   };
 }

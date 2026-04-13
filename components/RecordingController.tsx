@@ -92,7 +92,7 @@ export default function RecordingController() {
 
   const getLatestFrame = useCallback(() => latestFrameRef.current, []);
 
-  // Observe loop
+  // Observe loop (utterance-end-driven + slow proactive poll)
   const { observeCallCount, speakCount, silentCount } = useObserveLoop({
     isRecording: currentState === AppState.RecordingActive,
     getLatestFrame,
@@ -100,6 +100,7 @@ export default function RecordingController() {
     speak: tts.speak,
     addInterjection: eventLog.addInterjection,
     getPreviousInterjections: eventLog.getPreviousInterjections,
+    onUtteranceEnd: speechRecognition.onUtteranceEnd,
   });
 
   // Count frames from events

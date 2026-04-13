@@ -13,7 +13,6 @@ import type {
   SavedWorkflow,
 } from '@/lib/types';
 import {
-  OBSERVE_INTERVAL_MS,
   COOLDOWN_MS,
   FRAME_INTERVAL_MS,
   JPEG_QUALITY,
@@ -135,10 +134,6 @@ describe('Type interfaces compile correctly', () => {
 });
 
 describe('Constants', () => {
-  it('OBSERVE_INTERVAL_MS is 1000', () => {
-    expect(OBSERVE_INTERVAL_MS).toBe(1000);
-  });
-
   it('COOLDOWN_MS is 10000', () => {
     expect(COOLDOWN_MS).toBe(10000);
   });

@@ -1,12 +1,20 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { OBSERVE_INTERVAL_MS } from '@/lib/constants';
 import { ObserveRequest, ObserveResponse } from '@/lib/types';
 import { getObservePrompt } from '@/lib/storage';
 
 const FRAME_HISTORY_SIZE = 3;
-const SILENCE_GATE_SECONDS = 2;
+/** Background poll interval for proactive questions during long silence (ms) */
+const PROACTIVE_POLL_MS = 18000;
+/** Minimum seconds of silence before the background poll fires an observe call */
+const PROACTIVE_SILENCE_THRESHOLD = 12;
+/** Minimum cooldown between any two observe calls (ms) */
+const MIN_OBSERVE_GAP_MS = 3000;
+/** Max retries on API error before giving up for this turn */
+const MAX_RETRIES = 2;
+/** Retry delay base (ms), doubled each retry */
+const RETRY_DELAY_MS = 1000;
 
 /** Patterns that indicate the user is talking directly to Claude */
 const DIRECT_QUESTION_PATTERNS = [
@@ -18,7 +26,7 @@ const DIRECT_QUESTION_PATTERNS = [
   /is\s*that\s*clear/i,
   /can\s*you\s*(see|tell|explain)/i,
   /your\s*thoughts/i,
-  /claude/i,
+  /\bclaude\b/i,
   /what\s*should\s*i/i,
   /am\s*i\s*missing/i,
 ];
@@ -36,6 +44,8 @@ export interface UseObserveLoopOptions {
   addInterjection: (message: string, reason: string, timestamp_ms: number) => void;
   /** Get all previous interjection messages */
   getPreviousInterjections: () => string[];
+  /** Register for utterance-end events from Deepgram */
+  onUtteranceEnd: (cb: () => void) => void;
 }
 
 export interface UseObserveLoopReturn {
@@ -51,19 +61,21 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const [observeCallCount, setObserveCallCount] = useState(0);
   const [speakCount, setSpeakCount] = useState(0);
   const [silentCount, setSilentCount] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastInterjectionTimeRef = useRef<number>(0);
   const inFlightRef = useRef(false);
   const frameHistoryRef = useRef<string[]>([]);
+  const lastObserveTimeRef = useRef(0);
   const lastTranscriptLengthRef = useRef(0);
   const lastTranscriptChangeTimeRef = useRef(Date.now());
-  const silenceStartFrameRef = useRef<string | null>(null);
-  const wasUserSpeakingRef = useRef(false);
+  const proactiveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
-  const tick = useCallback(async () => {
-    // Skip if a previous request is still in flight
+  /**
+   * Core observe call. Sends frame + transcript to Claude and handles response.
+   * `trigger` indicates what caused the call (for logging/tuning).
+   */
+  const fireObserve = useCallback(async (trigger: 'utterance_end' | 'proactive') => {
+    // Don't stack concurrent requests
     if (inFlightRef.current) return;
 
     const opts = optionsRef.current;
@@ -72,63 +84,45 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     const now = Date.now();
 
+    // Enforce minimum gap between calls
+    if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) return;
+
     const transcriptWindow = opts.getTranscriptWindow(120);
 
-    // Silence detection: track how long since transcript grew
-    const isUserSpeaking = transcriptWindow.length !== lastTranscriptLengthRef.current;
-    if (isUserSpeaking) {
+    // For proactive polls: only fire if user has been genuinely silent
+    if (trigger === 'proactive') {
+      const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
+      if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
+    }
+
+    // Track transcript changes for silence detection
+    if (transcriptWindow.length !== lastTranscriptLengthRef.current) {
       lastTranscriptLengthRef.current = transcriptWindow.length;
       lastTranscriptChangeTimeRef.current = now;
-      wasUserSpeakingRef.current = true;
-      silenceStartFrameRef.current = null;
     }
-    const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
 
-    // Check if the user just asked Claude a direct question (bypass silence gate)
-    const lastChunk = transcriptWindow.slice(-200); // check last ~200 chars
+    const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
+    const lastChunk = transcriptWindow.slice(-200);
     const userAskedDirectly = DIRECT_QUESTION_PATTERNS.some((p) => p.test(lastChunk));
 
-    // Don't interrupt unless: user paused for 2+ seconds OR asked a direct question
-    if (secondsSilent < SILENCE_GATE_SECONDS && !userAskedDirectly) return;
-
-    // Capture the frame at the moment silence began (first tick after speech stops)
-    if (wasUserSpeakingRef.current && !silenceStartFrameRef.current) {
-      silenceStartFrameRef.current = frame;
-      wasUserSpeakingRef.current = false;
-    }
-
-    const msSinceLastInterjection = lastInterjectionTimeRef.current === 0
-      ? 999999
-      : now - lastInterjectionTimeRef.current;
-
-    // Track frame history (keep last N frames)
+    // Track frame history
     const history = frameHistoryRef.current;
     history.push(frame);
     if (history.length > FRAME_HISTORY_SIZE) {
       history.shift();
     }
 
-    const secondsSinceLastInterjection = lastInterjectionTimeRef.current === 0
+    const prevFrames = history.slice(0, -1);
+    const secondsSinceLastObserve = lastObserveTimeRef.current === 0
       ? 9999
-      : Math.floor(msSinceLastInterjection / 1000);
-
-    // Build previous frames: silence-start frame first, then recent history
-    const prevFrames: string[] = [];
-    if (silenceStartFrameRef.current && silenceStartFrameRef.current !== frame) {
-      prevFrames.push(silenceStartFrameRef.current);
-    }
-    for (const h of history.slice(0, -1)) {
-      if (h !== silenceStartFrameRef.current) {
-        prevFrames.push(h);
-      }
-    }
+      : Math.floor((now - lastObserveTimeRef.current) / 1000);
 
     const customPrompt = getObservePrompt();
     const body: ObserveRequest = {
       frame,
       previous_frames: prevFrames.length > 0 ? prevFrames : undefined,
       transcript_window: transcriptWindow,
-      seconds_since_last_interjection: secondsSinceLastInterjection,
+      seconds_since_last_interjection: secondsSinceLastObserve,
       seconds_silent: secondsSilent,
       previous_interjections: opts.getPreviousInterjections(),
       ...(customPrompt ? { system_prompt: customPrompt } : {}),
@@ -136,61 +130,76 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     };
 
     inFlightRef.current = true;
+    lastObserveTimeRef.current = now;
 
-    try {
-      const res = await fetch('/api/observe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+    let retries = 0;
+    let data: ObserveResponse | null = null;
 
-      if (!res.ok) {
-        console.error(`Observe API error: ${res.status}`);
-        return;
-      }
+    while (retries <= MAX_RETRIES) {
+      try {
+        const res = await fetch('/api/observe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
 
-      const data: ObserveResponse = await res.json();
-      setObserveCallCount((c) => c + 1);
-
-      if (data.speak && data.message) {
-        // Pre-play check: has the user started speaking since we made the API call?
-        const currentTranscript = opts.getTranscriptWindow(120);
-        if (currentTranscript.length !== transcriptWindow.length) {
-          // User started talking while we were waiting for Claude. Skip.
-          setSilentCount((c) => c + 1);
-        } else {
-          // Brief 200ms pause to let Deepgram catch up, then re-check
-          await new Promise((r) => setTimeout(r, 200));
-          const recheckTranscript = opts.getTranscriptWindow(120);
-          if (recheckTranscript.length !== transcriptWindow.length) {
-            // User started talking during the pause. Skip.
-            setSilentCount((c) => c + 1);
-          } else {
-            setSpeakCount((c) => c + 1);
-            lastInterjectionTimeRef.current = Date.now();
-            opts.addInterjection(data.message, data.reason, Date.now());
-            try {
-              await opts.speak(data.message);
-            } catch (err) {
-              console.error('TTS error during interjection:', err);
-            }
+        if (!res.ok) {
+          console.error(`Observe API error: ${res.status} (attempt ${retries + 1})`);
+          retries++;
+          if (retries <= MAX_RETRIES) {
+            await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * retries));
           }
+          continue;
         }
-      } else {
-        setSilentCount((c) => c + 1);
+
+        data = await res.json();
+        break;
+      } catch (err) {
+        console.error(`Observe fetch error (attempt ${retries + 1}):`, err);
+        retries++;
+        if (retries <= MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * retries));
+        }
       }
-    } catch (err) {
-      console.error('Observe loop fetch error:', err);
-    } finally {
-      inFlightRef.current = false;
     }
+
+    if (!data) {
+      inFlightRef.current = false;
+      return;
+    }
+
+    setObserveCallCount((c) => c + 1);
+
+    if (data.speak && data.message) {
+      setSpeakCount((c) => c + 1);
+      opts.addInterjection(data.message, data.reason, Date.now());
+      try {
+        await opts.speak(data.message);
+      } catch (err) {
+        console.error('TTS error during interjection:', err);
+      }
+    } else {
+      setSilentCount((c) => c + 1);
+    }
+
+    inFlightRef.current = false;
   }, []);
 
+  // Wire up utterance-end trigger
+  useEffect(() => {
+    if (!options.isRecording) return;
+    options.onUtteranceEnd(() => {
+      fireObserve('utterance_end');
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.isRecording, options.onUtteranceEnd, fireObserve]);
+
+  // Background proactive poll for long silences
   useEffect(() => {
     if (!options.isRecording) {
-      if (intervalRef.current !== null) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      if (proactiveTimerRef.current !== null) {
+        clearInterval(proactiveTimerRef.current);
+        proactiveTimerRef.current = null;
       }
       return;
     }
@@ -199,27 +208,23 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     setObserveCallCount(0);
     setSpeakCount(0);
     setSilentCount(0);
-    lastInterjectionTimeRef.current = 0;
     inFlightRef.current = false;
     frameHistoryRef.current = [];
+    lastObserveTimeRef.current = 0;
     lastTranscriptLengthRef.current = 0;
-    silenceStartFrameRef.current = null;
-    wasUserSpeakingRef.current = false;
-    // Start with silence timer already past the gate so the first observe can fire
-    // (the intro TTS plays during this window anyway)
-    lastTranscriptChangeTimeRef.current = Date.now() - 10000;
+    lastTranscriptChangeTimeRef.current = Date.now();
 
-    intervalRef.current = setInterval(() => {
-      tick();
-    }, OBSERVE_INTERVAL_MS);
+    proactiveTimerRef.current = setInterval(() => {
+      fireObserve('proactive');
+    }, PROACTIVE_POLL_MS);
 
     return () => {
-      if (intervalRef.current !== null) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      if (proactiveTimerRef.current !== null) {
+        clearInterval(proactiveTimerRef.current);
+        proactiveTimerRef.current = null;
       }
     };
-  }, [options.isRecording, tick]);
+  }, [options.isRecording, fireObserve]);
 
   return { observeCallCount, speakCount, silentCount };
 }

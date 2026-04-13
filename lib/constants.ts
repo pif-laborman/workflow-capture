@@ -1,6 +1,3 @@
-/** How often to POST the latest frame + transcript to /api/observe (ms) */
-export const OBSERVE_INTERVAL_MS = 1000;
-
 /** Minimum cooldown between Claude interjections (ms) */
 export const COOLDOWN_MS = 10000;
 
