@@ -26,24 +26,27 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
     );
   }
 
-  // Build image content: previous frames (older) + current frame (newest)
+  // Skip images entirely for direct questions (text-only is much faster)
+  const skipImages = !!body.user_asked_directly;
+
   const imageContent: Anthropic.ImageBlockParam[] = [];
-
-  // Add previous frames for context (so Claude can see screen changes)
-  if (body.previous_frames?.length) {
-    for (const prevFrame of body.previous_frames) {
-      imageContent.push({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: prevFrame },
-      });
+  if (!skipImages) {
+    // Add previous frames for context (so Claude can see screen changes)
+    if (body.previous_frames?.length) {
+      for (const prevFrame of body.previous_frames) {
+        imageContent.push({
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: prevFrame },
+        });
+      }
     }
-  }
 
-  // Add current (latest) frame
-  imageContent.push({
-    type: 'image',
-    source: { type: 'base64', media_type: 'image/jpeg', data: body.frame },
-  });
+    // Add current (latest) frame
+    imageContent.push({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: body.frame },
+    });
+  }
 
   // Build context text
   const contextParts: string[] = [];
