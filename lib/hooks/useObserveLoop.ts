@@ -6,7 +6,7 @@ import { getObservePrompt } from '@/lib/storage';
 
 const FRAME_HISTORY_SIZE = 3;
 /** Background poll interval for proactive questions during silence (ms) */
-const PROACTIVE_POLL_MS = 8000;
+const PROACTIVE_POLL_MS = 2000;
 /** Minimum seconds of silence before the background poll fires an observe call */
 const PROACTIVE_SILENCE_THRESHOLD = 4;
 /** Minimum cooldown between any two observe calls (ms) */
@@ -26,6 +26,8 @@ function isUserAskingQuestion(transcriptWindow: string): boolean {
 
 /** Debounce delay after a question (fast response) */
 const QUESTION_DEBOUNCE_MS = 300;
+/** Debounce delay after answering Claude's question (faster than proactive, slower than question) */
+const REPLY_DEBOUNCE_MS = 1500;
 
 export interface UseObserveLoopOptions {
   /** Whether recording is currently active */
@@ -94,12 +96,14 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     // For proactive polls: only fire if user has been genuinely silent
     // AND Claude hasn't spoken in the last 5s (avoids TTS collision)
+    // AND transcript has changed since last observe call (no duplicate questions)
     if (trigger === 'proactive') {
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
       const secSinceSpoke = lastSpeakTimeRef.current === 0
         ? 9999
         : Math.floor((now - lastSpeakTimeRef.current) / 1000);
       if (secSinceSpoke < 5) return;
+      if (transcriptWindow.length === knownTranscriptLengthRef.current) return;
     }
 
     // Update known length (for external tracking, not silence calc)
@@ -204,16 +208,31 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       clearTimeout(speechEndTimerRef.current);
       speechEndTimerRef.current = null;
     }
-    // Only trigger observe for questions (ends with ?).
-    // Narration does NOT trigger observe; the proactive poll handles
-    // asking questions during genuine silence (6s+). This eliminates
-    // all mid-narration interruptions.
+
     const isQuestion = chunkText.trim().endsWith('?');
     if (isQuestion) {
+      // User asked a question: fast response
       speechEndTimerRef.current = setTimeout(() => {
         fireObserve('utterance_end');
       }, QUESTION_DEBOUNCE_MS);
+      return;
     }
+
+    // Check if the user is replying to Claude's last question.
+    // If so, use a shorter debounce than the proactive poll so the
+    // conversation flows naturally (Claude asks, user answers, Claude follows up).
+    const transcript = optionsRef.current.getTranscriptWindow(120);
+    const lines = transcript.split('\n');
+    // Find the last [CLAUDE] line and check if it's recent (near the end)
+    const lastClaudeIdx = lines.findLastIndex((l) => l.startsWith('[CLAUDE]'));
+    const lastUserIdx = lines.findLastIndex((l) => l.startsWith('[USER]'));
+    if (lastClaudeIdx >= 0 && lastUserIdx > lastClaudeIdx) {
+      // User spoke after Claude's last question: this is a reply
+      speechEndTimerRef.current = setTimeout(() => {
+        fireObserve('utterance_end');
+      }, REPLY_DEBOUNCE_MS);
+    }
+    // Otherwise: pure narration, no timer. Proactive poll handles it.
   }, [fireObserve]);
 
   // Background proactive poll for long silences
