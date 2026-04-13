@@ -16,10 +16,10 @@ const MAX_RETRIES = 1;
 /** Retry delay (ms) */
 const RETRY_DELAY_MS = 1000;
 
-/** Patterns that indicate the user is talking directly to Claude */
+/** Patterns that indicate the user is talking directly to the observer */
 const DIRECT_QUESTION_PATTERNS = [
   /any.*questions/i,
-  /do\s*you\s*(have|see|notice|think)/i,
+  /do\s*you\s*(have|see|notice|think|understand|follow)/i,
   /what\s*do\s*you\s*think/i,
   /does\s*that\s*make\s*sense/i,
   /anything\s*(else|unclear|you\s*want)/i,
@@ -27,10 +27,18 @@ const DIRECT_QUESTION_PATTERNS = [
   /can\s*you\s*(see|tell|explain)/i,
   /your\s*thoughts/i,
   /\bclaude\b/i,
-  /what\s*should\s*i/i,
+  /\bduvo\b/i,
+  /what\s*should\s*(i|we)/i,
+  /where\s*should\s*(i|we)/i,
   /am\s*i\s*missing/i,
   /got\s*it\?/i,
   /you\s*follow/i,
+  /are\s*you\s*(there|ready|listening|watching)/i,
+  /\bhello\b.*\?/i,
+  /\bhey\b.*\?/i,
+  /should\s*(i|we)\s*(start|begin|go)/i,
+  /let'?s\s*(start|begin|go)/i,
+  /ready\s*to\s*(start|begin|go)/i,
 ];
 
 /** Debounce delay: fire observe this many ms after last transcript chunk */

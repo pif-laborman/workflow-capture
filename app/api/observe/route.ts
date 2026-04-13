@@ -70,7 +70,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
   }
 
   if (body.user_asked_directly) {
-    contextParts.push(`\nIMPORTANT: The user just asked YOU a direct question. Read the end of the transcript carefully and RESPOND to their question. You MUST set speak: true and answer what they asked. Do not analyze the screen; respond to the user conversationally.`);
+    contextParts.push(`\nIMPORTANT: The user just asked YOU a direct question or is addressing you. Read the end of the transcript carefully and RESPOND. You MUST set speak: true. If they are greeting you or asking if you are ready, respond warmly and briefly (e.g. "I'm here, go ahead and start whenever you're ready"). If they ask a question, answer it conversationally.`);
   }
 
   // Call Claude Sonnet
