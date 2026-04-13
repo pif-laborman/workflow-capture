@@ -52,15 +52,14 @@ export default function RecordingController() {
   const tts = useTTS();
   const eventLog = useEventLog();
 
-  // Sync transcript chunks into event log so getTranscriptWindow() sees them
-  const syncedChunkCountRef = useRef(0);
+  // Wire transcript directly into event log via synchronous callback
+  // (bypasses React state batching so event log is always up-to-date
+  // before UtteranceEnd fires)
   useEffect(() => {
-    const chunks = speechRecognition.transcriptChunks;
-    for (let i = syncedChunkCountRef.current; i < chunks.length; i++) {
-      eventLog.addTranscript(chunks[i]);
-    }
-    syncedChunkCountRef.current = chunks.length;
-  }, [speechRecognition.transcriptChunks, eventLog]);
+    speechRecognition.onFinalTranscript((chunk) => {
+      eventLog.addTranscript(chunk);
+    });
+  }, [speechRecognition.onFinalTranscript, eventLog.addTranscript]);
 
   // Interrupt: cancel TTS when user starts speaking (watch both interim and final)
   const prevChunkCountRef = useRef(0);

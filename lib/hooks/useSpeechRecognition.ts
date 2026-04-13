@@ -13,6 +13,8 @@ interface UseSpeechRecognitionReturn {
   isListening: boolean;
   /** Register a callback fired when Deepgram detects end-of-utterance */
   onUtteranceEnd: (cb: () => void) => void;
+  /** Register a callback fired synchronously on each final transcript chunk */
+  onFinalTranscript: (cb: (chunk: TranscriptChunk) => void) => void;
 }
 
 interface DeepgramResult {
@@ -84,9 +86,14 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const activeRef = useRef(false);
   const utteranceEndCbRef = useRef<(() => void) | null>(null);
+  const finalTranscriptCbRef = useRef<((chunk: TranscriptChunk) => void) | null>(null);
 
   const onUtteranceEnd = useCallback((cb: () => void) => {
     utteranceEndCbRef.current = cb;
+  }, []);
+
+  const onFinalTranscript = useCallback((cb: (chunk: TranscriptChunk) => void) => {
+    finalTranscriptCbRef.current = cb;
   }, []);
 
   const cleanupConnection = useCallback(() => {
@@ -171,6 +178,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                 timestamp_ms: Date.now(),
                 isFinal: true,
               };
+              // Fire callback synchronously BEFORE React state update
+              // so event log has the chunk before any UtteranceEnd fires
+              finalTranscriptCbRef.current?.(chunk);
               setTranscriptChunks((prev) => [...prev, chunk]);
               setInterimText('');
             } else {
@@ -241,5 +251,6 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     interimText,
     isListening,
     onUtteranceEnd,
+    onFinalTranscript,
   };
 }
