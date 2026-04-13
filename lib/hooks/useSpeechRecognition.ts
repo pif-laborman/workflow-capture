@@ -149,9 +149,8 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       // Close old WS if any (but keep audio pipeline)
       closeWs();
 
-      const wsUrl = `${DEEPGRAM_WS_URL}?${DEEPGRAM_PARAMS}&token=${key}`;
       console.log('[deepgram] Connecting WS...');
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(`${DEEPGRAM_WS_URL}?${DEEPGRAM_PARAMS}`, ['token', key]);
       wsRef.current = ws;
 
       ws.onopen = () => {
