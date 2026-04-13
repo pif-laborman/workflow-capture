@@ -106,13 +106,13 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
 
     // For proactive polls: only fire if user has been genuinely silent
-    // AND Claude hasn't spoken recently (avoids rapid double-responses)
+    // AND Claude hasn't spoken in the last 5s (avoids TTS collision)
     if (trigger === 'proactive') {
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
-      const sinceLast = lastSpeakTimeRef.current === 0
+      const secSinceSpoke = lastSpeakTimeRef.current === 0
         ? 9999
         : Math.floor((now - lastSpeakTimeRef.current) / 1000);
-      if (sinceLast < PROACTIVE_SILENCE_THRESHOLD) return;
+      if (secSinceSpoke < 5) return;
     }
 
     // Update known length (for external tracking, not silence calc)
