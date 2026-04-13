@@ -96,6 +96,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) return;
 
     const transcriptWindow = opts.getTranscriptWindow(120);
+    console.log(`[observe] transcript=${transcriptWindow.length}ch: "${transcriptWindow.slice(-150)}"`);
 
     // Silence = time since last transcript growth (tracked externally)
     const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
