@@ -1,5 +1,3 @@
-export const dynamic = 'force-dynamic';
-
 export async function GET(): Promise<Response> {
   const apiKey = process.env.DEEPGRAM_API_KEY;
   if (!apiKey) {
@@ -11,11 +9,6 @@ export async function GET(): Promise<Response> {
 
   return new Response(
     JSON.stringify({ key: apiKey }),
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
-      },
-    },
+    { headers: { 'Content-Type': 'application/json' } },
   );
 }

@@ -136,7 +136,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const connectWs = useCallback(async (stream: MediaStream) => {
     // Fetch a fresh Deepgram API key
     try {
-      const tokenRes = await fetch(`/api/deepgram-token?t=${Date.now()}`, { cache: 'no-store' });
+      const tokenRes = await fetch('/api/deepgram-token');
       if (!tokenRes.ok) {
         console.error('[deepgram] Token fetch failed:', tokenRes.status);
         return;
