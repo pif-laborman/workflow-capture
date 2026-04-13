@@ -174,10 +174,14 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     if (data.speak && data.message) {
       setSpeakCount((c) => c + 1);
-      lastSpeakTimeRef.current = Date.now();
       opts.addInterjection(data.message, data.reason, Date.now());
       try {
-        await opts.speak(data.message);
+        const completed = await opts.speak(data.message);
+        // Only apply cooldown if Claude finished the full question.
+        // If interrupted mid-sentence, let the proactive poll fire sooner.
+        if (completed) {
+          lastSpeakTimeRef.current = Date.now();
+        }
       } catch {
         // TTS failed; interjection already logged in event log
       }

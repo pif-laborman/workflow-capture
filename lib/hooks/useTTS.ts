@@ -8,7 +8,8 @@ interface UseTTSOptions {
 }
 
 interface UseTTSReturn {
-  speak: (text: string) => Promise<void>;
+  /** Speaks text. Returns true if completed naturally, false if cancelled/errored. */
+  speak: (text: string) => Promise<boolean>;
   isSpeaking: boolean;
   cancel: () => void;
 }
@@ -33,8 +34,8 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     setIsSpeaking(false);
   }, []);
 
-  const speak = useCallback((text: string): Promise<void> => {
-    return new Promise<void>(async (resolve) => {
+  const speak = useCallback((text: string): Promise<boolean> => {
+    return new Promise<boolean>(async (resolve) => {
       // Cancel any ongoing speech
       cancel();
 
@@ -45,7 +46,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         // Retry once on 502 (ElevenLabs transient failures / rate limits)
         let res: Response | null = null;
         for (let attempt = 0; attempt < 2; attempt++) {
-          if (controller.signal.aborted) { resolve(); return; }
+          if (controller.signal.aborted) { resolve(false); return; }
           res = await fetch('/api/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -59,13 +60,13 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
 
         if (!res || !res.ok || controller.signal.aborted) {
           console.warn('TTS: API returned', res?.status, '- skipping interjection');
-          resolve();
+          resolve(false);
           return;
         }
 
         const blob = await res.blob();
         if (controller.signal.aborted) {
-          resolve();
+          resolve(false);
           return;
         }
 
@@ -83,7 +84,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
           optionsRef.current.onSpeakEnd?.();
           URL.revokeObjectURL(url);
           audioRef.current = null;
-          resolve();
+          resolve(true); // completed naturally
         };
 
         audio.onerror = () => {
@@ -92,20 +93,18 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
           optionsRef.current.onSpeakEnd?.();
           URL.revokeObjectURL(url);
           audioRef.current = null;
-          resolve();
+          resolve(false);
         };
 
         audio.play().catch(() => {
-          // Autoplay blocked or playback error; skip gracefully
           console.warn('TTS: autoplay blocked - skipping interjection');
           URL.revokeObjectURL(url);
           audioRef.current = null;
-          resolve();
+          resolve(false);
         });
       } catch {
-        // Network error or abort; skip gracefully
         console.warn('TTS: network error - skipping interjection');
-        resolve();
+        resolve(false);
       }
     });
   }, [cancel]);
