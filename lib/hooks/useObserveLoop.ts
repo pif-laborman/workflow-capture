@@ -34,8 +34,8 @@ export interface UseObserveLoopOptions {
   getLatestFrame: () => string | null;
   /** Get transcript window text (from event log) */
   getTranscriptWindow: (lastNSeconds: number) => string;
-  /** TTS speak function - returns promise that resolves when speech ends */
-  speak: (text: string) => Promise<void>;
+  /** TTS speak function. Returns true if completed naturally, false if cancelled. */
+  speak: (text: string) => Promise<boolean>;
   /** Add interjection to event log */
   addInterjection: (message: string, reason: string, timestamp_ms: number) => void;
   /** Get all previous interjection messages */
