@@ -55,7 +55,6 @@ export default function RecordingController() {
   // Refs for transcript sync (declared here, effect after observe loop)
   const addTranscriptRef = useRef(eventLog.addTranscript);
   addTranscriptRef.current = eventLog.addTranscript;
-  const noteGrowthRef = useRef<() => void>(() => {});
 
   // Interrupt: cancel TTS when user starts speaking (watch both interim and final)
   const prevChunkCountRef = useRef(0);
@@ -98,23 +97,23 @@ export default function RecordingController() {
   const getLatestFrame = useCallback(() => latestFrameRef.current, []);
 
   // Observe loop (utterance-end-driven + slow proactive poll)
-  const { observeCallCount, speakCount, silentCount, noteTranscriptGrowth } = useObserveLoop({
+  const { observeCallCount, speakCount, silentCount, noteTranscriptArrival } = useObserveLoop({
     isRecording: currentState === AppState.RecordingActive,
     getLatestFrame,
     getTranscriptWindow: eventLog.getTranscriptWindow,
     speak: tts.speak,
     addInterjection: eventLog.addInterjection,
     getPreviousInterjections: eventLog.getPreviousInterjections,
-    onUtteranceEnd: speechRecognition.onUtteranceEnd,
   });
 
   // Wire transcript directly into event log via synchronous callback
-  // (bypasses React state batching so event log is always current before UtteranceEnd)
-  noteGrowthRef.current = noteTranscriptGrowth;
+  // Also triggers the speech-end debounce timer in the observe loop
+  const noteArrivalRef = useRef(noteTranscriptArrival);
+  noteArrivalRef.current = noteTranscriptArrival;
   useEffect(() => {
     speechRecognition.onFinalTranscript((chunk) => {
       addTranscriptRef.current(chunk);
-      noteGrowthRef.current();
+      noteArrivalRef.current();
     });
   }, [speechRecognition.onFinalTranscript]);
 

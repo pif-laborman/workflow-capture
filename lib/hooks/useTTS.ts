@@ -50,8 +50,8 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
         });
 
         if (!res.ok || controller.signal.aborted) {
-          // Voxtral failed; skip this interjection silently
-          console.warn('TTS: Voxtral API returned', res.status, '- skipping interjection');
+          // TTS failed; skip this interjection silently
+          console.warn('TTS: API returned', res.status, '- skipping interjection');
           resolve();
           return;
         }

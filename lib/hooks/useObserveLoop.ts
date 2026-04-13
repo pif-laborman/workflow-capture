@@ -33,6 +33,9 @@ const DIRECT_QUESTION_PATTERNS = [
   /you\s*follow/i,
 ];
 
+/** Debounce delay: fire observe this many ms after last transcript chunk */
+const SPEECH_END_DEBOUNCE_MS = 1500;
+
 export interface UseObserveLoopOptions {
   /** Whether recording is currently active */
   isRecording: boolean;
@@ -46,8 +49,6 @@ export interface UseObserveLoopOptions {
   addInterjection: (message: string, reason: string, timestamp_ms: number) => void;
   /** Get all previous interjection messages */
   getPreviousInterjections: () => string[];
-  /** Register for utterance-end events from Deepgram */
-  onUtteranceEnd: (cb: () => void) => void;
 }
 
 export interface UseObserveLoopReturn {
@@ -57,8 +58,8 @@ export interface UseObserveLoopReturn {
   speakCount: number;
   /** Number of times Claude chose silence */
   silentCount: number;
-  /** Call this when new transcript arrives to keep silence tracking accurate */
-  noteTranscriptGrowth: () => void;
+  /** Call when new transcript arrives (resets debounce timer + silence tracking) */
+  noteTranscriptArrival: () => void;
 }
 
 export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopReturn {
@@ -74,16 +75,9 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const knownTranscriptLengthRef = useRef(0);
   const lastTranscriptGrowthRef = useRef(Date.now());
   const proactiveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const speechEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
-
-  /**
-   * Update silence tracking. Called from the transcript sync callback
-   * so it stays current even between observe calls.
-   */
-  const noteTranscriptGrowth = useCallback(() => {
-    lastTranscriptGrowthRef.current = Date.now();
-  }, []);
 
   /**
    * Core observe call. Sends frame + transcript to Claude and handles response.
@@ -206,14 +200,22 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     inFlightRef.current = false;
   }, []);
 
-  // Wire up utterance-end trigger
-  useEffect(() => {
-    if (!options.isRecording) return;
-    options.onUtteranceEnd(() => {
+  /**
+   * Called on each final transcript chunk. Resets a debounce timer:
+   * if no new transcript arrives within SPEECH_END_DEBOUNCE_MS,
+   * fires the observe call (user finished speaking).
+   */
+  const noteTranscriptArrival = useCallback(() => {
+    lastTranscriptGrowthRef.current = Date.now();
+    // Clear existing timer
+    if (speechEndTimerRef.current) {
+      clearTimeout(speechEndTimerRef.current);
+    }
+    // Set new debounce timer
+    speechEndTimerRef.current = setTimeout(() => {
       fireObserve('utterance_end');
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.isRecording, options.onUtteranceEnd, fireObserve]);
+    }, SPEECH_END_DEBOUNCE_MS);
+  }, [fireObserve]);
 
   // Background proactive poll for long silences
   useEffect(() => {
@@ -245,8 +247,12 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
         clearInterval(proactiveTimerRef.current);
         proactiveTimerRef.current = null;
       }
+      if (speechEndTimerRef.current !== null) {
+        clearTimeout(speechEndTimerRef.current);
+        speechEndTimerRef.current = null;
+      }
     };
   }, [options.isRecording, fireObserve]);
 
-  return { observeCallCount, speakCount, silentCount, noteTranscriptGrowth };
+  return { observeCallCount, speakCount, silentCount, noteTranscriptArrival };
 }
