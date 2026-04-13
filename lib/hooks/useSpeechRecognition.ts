@@ -39,6 +39,9 @@ const DEEPGRAM_PARAMS = [
   'channels=1',
 ].join('&');
 
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY_MS = 1000;
+
 /**
  * Captures raw PCM audio from a MediaStream at 16kHz mono.
  * Returns a cleanup function to disconnect the pipeline.
@@ -87,6 +90,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const activeRef = useRef(false);
   const utteranceEndCbRef = useRef<(() => void) | null>(null);
   const finalTranscriptCbRef = useRef<((chunk: TranscriptChunk) => void) | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const onUtteranceEnd = useCallback((cb: () => void) => {
     utteranceEndCbRef.current = cb;
@@ -96,7 +102,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     finalTranscriptCbRef.current = cb;
   }, []);
 
-  const cleanupConnection = useCallback(() => {
+  const closeWs = useCallback(() => {
     if (wsRef.current) {
       try {
         if (wsRef.current.readyState === WebSocket.OPEN) {
@@ -106,46 +112,68 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       } catch { /* ignore */ }
       wsRef.current = null;
     }
+  }, []);
+
+  const cleanupAll = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    closeWs();
     if (audioCleanupRef.current) {
       audioCleanupRef.current();
       audioCleanupRef.current = null;
     }
     audioCtxRef.current = null;
-  }, []);
+    micStreamRef.current = null;
+    reconnectAttemptsRef.current = 0;
+  }, [closeWs]);
 
-  const start = useCallback((micStream?: MediaStream) => {
-    if (typeof window === 'undefined') return;
+  /**
+   * Connect (or reconnect) the Deepgram WebSocket.
+   * Reuses the existing mic stream and audio pipeline on reconnect.
+   */
+  const connectWs = useCallback(async (stream: MediaStream) => {
+    // Fetch a fresh Deepgram API key
+    try {
+      const tokenRes = await fetch('/api/deepgram-token');
+      if (!tokenRes.ok) {
+        console.error('Failed to fetch Deepgram token');
+        return;
+      }
+      const { key } = await tokenRes.json();
 
-    activeRef.current = true;
-    setTranscriptChunks([]);
-    setInterimText('');
-    setIsListening(true);
+      if (!activeRef.current) return;
 
-    (async () => {
-      try {
-        // Use provided mic stream or request one
-        const stream = micStream || await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Close old WS if any (but keep audio pipeline)
+      closeWs();
 
-        // Fetch Deepgram API key from server
-        const tokenRes = await fetch('/api/deepgram-token');
-        if (!tokenRes.ok) {
-          console.error('Failed to fetch Deepgram token');
-          activeRef.current = false;
-          setIsListening(false);
+      const ws = new WebSocket(`${DEEPGRAM_WS_URL}?${DEEPGRAM_PARAMS}`, ['token', key]);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (!activeRef.current) {
+          ws.close();
           return;
         }
-        const { key } = await tokenRes.json();
+        reconnectAttemptsRef.current = 0;
+        setIsListening(true);
 
-        if (!activeRef.current) return;
-
-        // Open WebSocket to Deepgram
-        const ws = new WebSocket(`${DEEPGRAM_WS_URL}?${DEEPGRAM_PARAMS}`, ['token', key]);
-        wsRef.current = ws;
-
-        ws.onopen = () => {
-          if (!activeRef.current) {
-            ws.close();
-            return;
+        // Only create audio pipeline on first connect (not reconnect)
+        if (!audioCleanupRef.current) {
+          const { audioCtx, cleanup } = createAudioPipeline(stream, (data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(data);
+            }
+          });
+          audioCtxRef.current = audioCtx;
+          audioCleanupRef.current = cleanup;
+        } else {
+          // Reconnect: rebuild audio pipeline to wire to new WS
+          // (old pipeline still sends to old closed WS)
+          if (audioCleanupRef.current) {
+            audioCleanupRef.current();
+            audioCleanupRef.current = null;
           }
           const { audioCtx, cleanup } = createAudioPipeline(stream, (data) => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -154,68 +182,101 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
           });
           audioCtxRef.current = audioCtx;
           audioCleanupRef.current = cleanup;
-        };
+        }
+      };
 
-        ws.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data);
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
 
-            // Deepgram fires UtteranceEnd when it detects end-of-speech
-            if (msg.type === 'UtteranceEnd') {
-              utteranceEndCbRef.current?.();
-              return;
-            }
-
-            const result: DeepgramResult = msg;
-            const transcript = result.channel?.alternatives?.[0]?.transcript || '';
-
-            if (!transcript) return;
-
-            if (result.is_final) {
-              const chunk: TranscriptChunk = {
-                text: transcript,
-                timestamp_ms: Date.now(),
-                isFinal: true,
-              };
-              // Fire callback synchronously BEFORE React state update
-              // so event log has the chunk before any UtteranceEnd fires
-              finalTranscriptCbRef.current?.(chunk);
-              setTranscriptChunks((prev) => [...prev, chunk]);
-              setInterimText('');
-            } else {
-              setInterimText(transcript);
-            }
-          } catch { /* ignore malformed messages */ }
-        };
-
-        ws.onerror = () => {
-          cleanupConnection();
-          activeRef.current = false;
-          setIsListening(false);
-        };
-
-        ws.onclose = () => {
-          if (activeRef.current) {
-            cleanupConnection();
-            activeRef.current = false;
-            setIsListening(false);
+          // Deepgram fires UtteranceEnd when it detects end-of-speech
+          if (msg.type === 'UtteranceEnd') {
+            utteranceEndCbRef.current?.();
+            return;
           }
-        };
+
+          const result: DeepgramResult = msg;
+          const transcript = result.channel?.alternatives?.[0]?.transcript || '';
+
+          if (!transcript) return;
+
+          if (result.is_final) {
+            const chunk: TranscriptChunk = {
+              text: transcript,
+              timestamp_ms: Date.now(),
+              isFinal: true,
+            };
+            // Fire callback synchronously BEFORE React state update
+            // so event log has the chunk before any UtteranceEnd fires
+            finalTranscriptCbRef.current?.(chunk);
+            setTranscriptChunks((prev) => [...prev, chunk]);
+            setInterimText('');
+          } else {
+            setInterimText(transcript);
+          }
+        } catch { /* ignore malformed messages */ }
+      };
+
+      ws.onerror = () => {
+        // Will trigger onclose, reconnect handled there
+      };
+
+      ws.onclose = () => {
+        wsRef.current = null;
+        if (!activeRef.current) return;
+
+        // Auto-reconnect with backoff
+        if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, reconnectAttemptsRef.current);
+          reconnectAttemptsRef.current++;
+          console.warn(`[deepgram] WS closed, reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+          setIsListening(false);
+          reconnectTimerRef.current = setTimeout(() => {
+            if (activeRef.current && micStreamRef.current) {
+              connectWs(micStreamRef.current);
+            }
+          }, delay);
+        } else {
+          console.error('[deepgram] Max reconnect attempts reached, giving up');
+          setIsListening(false);
+        }
+      };
+    } catch (err) {
+      console.error('Deepgram connection failed:', err);
+    }
+  }, [closeWs]);
+
+  const start = useCallback((micStream?: MediaStream) => {
+    if (typeof window === 'undefined') return;
+
+    activeRef.current = true;
+    reconnectAttemptsRef.current = 0;
+    setTranscriptChunks([]);
+    setInterimText('');
+    setIsListening(true);
+
+    (async () => {
+      try {
+        const stream = micStream || await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStreamRef.current = stream;
+
+        if (!activeRef.current) return;
+        await connectWs(stream);
       } catch (err) {
         console.error('Deepgram speech recognition failed:', err);
-        cleanupConnection();
+        cleanupAll();
         activeRef.current = false;
         setIsListening(false);
       }
     })();
-  }, [cleanupConnection]);
+  }, [connectWs, cleanupAll]);
 
   const stop = useCallback(() => {
     activeRef.current = false;
-    cleanupConnection();
+    cleanupAll();
     setIsListening(false);
     setInterimText('');
-  }, [cleanupConnection]);
+  }, [cleanupAll]);
 
   const pause = useCallback(() => {
     activeRef.current = false;
@@ -237,9 +298,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   useEffect(() => {
     return () => {
       activeRef.current = false;
-      cleanupConnection();
+      cleanupAll();
     };
-  }, [cleanupConnection]);
+  }, [cleanupAll]);
 
   return {
     start,
