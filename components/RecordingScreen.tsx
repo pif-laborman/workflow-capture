@@ -17,7 +17,8 @@ export interface CapturedFrame {
 
 type FeedItem =
   | { kind: 'frame'; timestamp_ms: number; base64: string }
-  | { kind: 'transcript'; timestamp_ms: number; text: string; isFinal: boolean };
+  | { kind: 'transcript'; timestamp_ms: number; text: string; isFinal: boolean }
+  | { kind: 'interjection'; timestamp_ms: number; message: string };
 
 export interface RecordingScreenProps {
   hasTabAudio: boolean;
@@ -85,9 +86,17 @@ export default function RecordingScreen({
       });
     }
 
+    for (const ij of interjections) {
+      items.push({
+        kind: 'interjection',
+        timestamp_ms: ij.timestamp_ms,
+        message: ij.message,
+      });
+    }
+
     items.sort((a, b) => a.timestamp_ms - b.timestamp_ms);
     return items;
-  }, [capturedFrames, transcriptChunks]);
+  }, [capturedFrames, transcriptChunks, interjections]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -196,6 +205,21 @@ export default function RecordingScreen({
                       </div>
                     );
                   }
+                  if (item.kind === 'interjection') {
+                    return (
+                      <div
+                        key={`ij-${i}`}
+                        className="transcript-block transcript-interjection"
+                        data-testid="transcript-interjection"
+                      >
+                        <span className="transcript-timestamp">
+                          {formatTimestamp(item.timestamp_ms, startTimeRef.current)}
+                        </span>
+                        <span className="transcript-speaker transcript-speaker-duvo">Duvo:</span>
+                        <span className="transcript-text">{item.message}</span>
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={`t-${i}`}
@@ -205,6 +229,7 @@ export default function RecordingScreen({
                       <span className="transcript-timestamp">
                         {formatTimestamp(item.timestamp_ms, startTimeRef.current)}
                       </span>
+                      {item.isFinal && <span className="transcript-speaker transcript-speaker-you">You:</span>}
                       <span className="transcript-text">{item.text}</span>
                     </div>
                   );

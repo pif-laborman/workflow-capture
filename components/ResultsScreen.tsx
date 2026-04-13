@@ -114,14 +114,19 @@ export default function ResultsScreen() {
   }
 
   // Build transcript from events (for freshly processed workflows)
+  // Interleaves user speech and Duvo interjections chronologically
   const transcript = savedTranscript || sessionEvents
-    .filter((e) => e.type === EventType.Transcript)
+    .filter((e) => e.type === EventType.Transcript || e.type === EventType.Interjection)
     .map((e) => {
+      if (e.type === EventType.Interjection) {
+        const p = e.payload as { message: string };
+        return `Duvo: ${p.message}`;
+      }
       const p = e.payload as { text: string; isFinal: boolean };
-      return p.isFinal ? p.text : '';
+      return p.isFinal ? `You: ${p.text}` : '';
     })
     .filter(Boolean)
-    .join(' ');
+    .join('\n');
 
   // Save to localStorage on first render of a new workflow (not viewing a saved one)
   // Strip base64 frame data to stay within localStorage's 5MB limit
@@ -137,15 +142,19 @@ export default function ResultsScreen() {
         }
         return e;
       });
-      // Extract full transcript text from session events
+      // Extract full transcript with both user and Duvo responses
       const transcript = sessionEvents
-        .filter((e) => e.type === EventType.Transcript)
+        .filter((e) => e.type === EventType.Transcript || e.type === EventType.Interjection)
         .map((e) => {
+          if (e.type === EventType.Interjection) {
+            const p = e.payload as { message: string };
+            return `Duvo: ${p.message}`;
+          }
           const p = e.payload as { text: string; isFinal: boolean };
-          return p.isFinal ? p.text : '';
+          return p.isFinal ? `You: ${p.text}` : '';
         })
         .filter(Boolean)
-        .join(' ');
+        .join('\n');
 
       persistWorkflow({
         id: crypto.randomUUID(),
@@ -297,7 +306,14 @@ export default function ResultsScreen() {
           <div className="results-section">
             <h2 className="results-section-heading">Transcript</h2>
             <div className="results-transcript" data-testid="results-transcript">
-              <p>{transcript}</p>
+              {transcript.split('\n').map((line, i) => (
+                <p
+                  key={i}
+                  className={line.startsWith('Duvo:') ? 'transcript-line-duvo' : 'transcript-line-you'}
+                >
+                  {line}
+                </p>
+              ))}
             </div>
           </div>
         )}
