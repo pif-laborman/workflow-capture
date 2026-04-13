@@ -55,11 +55,15 @@ export default function RecordingController() {
   // Wire transcript directly into event log via synchronous callback
   // (bypasses React state batching so event log is always up-to-date
   // before UtteranceEnd fires)
+  const addTranscriptRef = useRef(eventLog.addTranscript);
+  addTranscriptRef.current = eventLog.addTranscript;
   useEffect(() => {
+    console.log('[controller] registering onFinalTranscript callback');
     speechRecognition.onFinalTranscript((chunk) => {
-      eventLog.addTranscript(chunk);
+      console.log(`[controller] onFinalTranscript fired: "${chunk.text.slice(0, 60)}"`);
+      addTranscriptRef.current(chunk);
     });
-  }, [speechRecognition.onFinalTranscript, eventLog.addTranscript]);
+  }, [speechRecognition.onFinalTranscript]);
 
   // Interrupt: cancel TTS when user starts speaking (watch both interim and final)
   const prevChunkCountRef = useRef(0);
