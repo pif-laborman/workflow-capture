@@ -138,17 +138,20 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     try {
       const tokenRes = await fetch(`/api/deepgram-token?t=${Date.now()}`, { cache: 'no-store' });
       if (!tokenRes.ok) {
-        console.error('Failed to fetch Deepgram token');
+        console.error('[deepgram] Token fetch failed:', tokenRes.status);
         return;
       }
       const { key } = await tokenRes.json();
+      console.log(`[deepgram] Got token: ${key?.slice(0, 8)}... (${key?.length} chars)`);
 
       if (!activeRef.current) return;
 
       // Close old WS if any (but keep audio pipeline)
       closeWs();
 
-      const ws = new WebSocket(`${DEEPGRAM_WS_URL}?${DEEPGRAM_PARAMS}`, ['token', key]);
+      const wsUrl = `${DEEPGRAM_WS_URL}?${DEEPGRAM_PARAMS}&token=${key}`;
+      console.log('[deepgram] Connecting WS...');
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -217,11 +220,12 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         } catch { /* ignore malformed messages */ }
       };
 
-      ws.onerror = () => {
-        // Will trigger onclose, reconnect handled there
+      ws.onerror = (ev) => {
+        console.error('[deepgram] WS error:', ev);
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
+        console.warn(`[deepgram] WS closed: code=${ev.code} reason="${ev.reason}" clean=${ev.wasClean}`);
         wsRef.current = null;
         if (!activeRef.current) return;
 
