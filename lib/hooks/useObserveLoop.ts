@@ -89,11 +89,12 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
    * Core observe call. Sends frame + transcript to Claude and handles response.
    */
   const fireObserve = useCallback(async (trigger: 'utterance_end' | 'proactive') => {
-    if (inFlightRef.current) return;
+    console.log(`[observe] fireObserve trigger=${trigger}`);
+    if (inFlightRef.current) { console.log('[observe] skipped: in flight'); return; }
 
     const opts = optionsRef.current;
     const frame = opts.getLatestFrame();
-    if (!frame) return;
+    if (!frame) { console.log('[observe] skipped: no frame'); return; }
 
     const now = Date.now();
 
@@ -187,6 +188,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     }
 
     setObserveCallCount((c) => c + 1);
+    console.log(`[observe] response: speak=${data.speak} message="${data.message?.slice(0, 60)}"`);
 
     if (data.speak && data.message) {
       setSpeakCount((c) => c + 1);

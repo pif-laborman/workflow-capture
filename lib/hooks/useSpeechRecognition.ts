@@ -193,6 +193,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
           // Deepgram fires UtteranceEnd when it detects end-of-speech
           if (msg.type === 'UtteranceEnd') {
+            console.log('[deepgram] UtteranceEnd received');
             utteranceEndCbRef.current?.();
             return;
           }
