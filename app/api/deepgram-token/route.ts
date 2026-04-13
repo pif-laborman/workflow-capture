@@ -21,7 +21,7 @@ export async function GET(): Promise<Response> {
         },
         body: JSON.stringify({
           comment: 'workflow-capture-session',
-          scopes: ['usage:write'],
+          scopes: ['member'],
           time_to_live_in_seconds: 30,
         }),
       },
