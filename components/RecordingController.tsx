@@ -52,18 +52,10 @@ export default function RecordingController() {
   const tts = useTTS();
   const eventLog = useEventLog();
 
-  // Wire transcript directly into event log via synchronous callback
-  // (bypasses React state batching so event log is always up-to-date
-  // before UtteranceEnd fires)
+  // Refs for transcript sync (declared here, effect after observe loop)
   const addTranscriptRef = useRef(eventLog.addTranscript);
   addTranscriptRef.current = eventLog.addTranscript;
-  useEffect(() => {
-    console.log('[controller] registering onFinalTranscript callback');
-    speechRecognition.onFinalTranscript((chunk) => {
-      console.log(`[controller] onFinalTranscript fired: "${chunk.text.slice(0, 60)}"`);
-      addTranscriptRef.current(chunk);
-    });
-  }, [speechRecognition.onFinalTranscript]);
+  const noteGrowthRef = useRef<() => void>(() => {});
 
   // Interrupt: cancel TTS when user starts speaking (watch both interim and final)
   const prevChunkCountRef = useRef(0);
@@ -106,7 +98,7 @@ export default function RecordingController() {
   const getLatestFrame = useCallback(() => latestFrameRef.current, []);
 
   // Observe loop (utterance-end-driven + slow proactive poll)
-  const { observeCallCount, speakCount, silentCount } = useObserveLoop({
+  const { observeCallCount, speakCount, silentCount, noteTranscriptGrowth } = useObserveLoop({
     isRecording: currentState === AppState.RecordingActive,
     getLatestFrame,
     getTranscriptWindow: eventLog.getTranscriptWindow,
@@ -115,6 +107,16 @@ export default function RecordingController() {
     getPreviousInterjections: eventLog.getPreviousInterjections,
     onUtteranceEnd: speechRecognition.onUtteranceEnd,
   });
+
+  // Wire transcript directly into event log via synchronous callback
+  // (bypasses React state batching so event log is always current before UtteranceEnd)
+  noteGrowthRef.current = noteTranscriptGrowth;
+  useEffect(() => {
+    speechRecognition.onFinalTranscript((chunk) => {
+      addTranscriptRef.current(chunk);
+      noteGrowthRef.current();
+    });
+  }, [speechRecognition.onFinalTranscript]);
 
   // Count frames from events
   const framesCaptured = eventLog.events.filter(

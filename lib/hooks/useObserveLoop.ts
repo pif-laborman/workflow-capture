@@ -10,10 +10,10 @@ const PROACTIVE_POLL_MS = 18000;
 /** Minimum seconds of silence before the background poll fires an observe call */
 const PROACTIVE_SILENCE_THRESHOLD = 12;
 /** Minimum cooldown between any two observe calls (ms) */
-const MIN_OBSERVE_GAP_MS = 3000;
+const MIN_OBSERVE_GAP_MS = 2000;
 /** Max retries on API error before giving up for this turn */
-const MAX_RETRIES = 2;
-/** Retry delay base (ms), doubled each retry */
+const MAX_RETRIES = 1;
+/** Retry delay (ms) */
 const RETRY_DELAY_MS = 1000;
 
 /** Patterns that indicate the user is talking directly to Claude */
@@ -55,6 +55,8 @@ export interface UseObserveLoopReturn {
   speakCount: number;
   /** Number of times Claude chose silence */
   silentCount: number;
+  /** Call this when new transcript arrives to keep silence tracking accurate */
+  noteTranscriptGrowth: () => void;
 }
 
 export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopReturn {
@@ -64,60 +66,53 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const inFlightRef = useRef(false);
   const frameHistoryRef = useRef<string[]>([]);
   const lastObserveTimeRef = useRef(0);
-  const lastTranscriptLengthRef = useRef(0);
-  const lastTranscriptChangeTimeRef = useRef(Date.now());
+  const lastSpeakTimeRef = useRef(0);
+  // Track transcript length independently so we can detect silence
+  // without resetting on every observe call
+  const knownTranscriptLengthRef = useRef(0);
+  const lastTranscriptGrowthRef = useRef(Date.now());
   const proactiveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
   /**
+   * Update silence tracking. Called from the transcript sync callback
+   * so it stays current even between observe calls.
+   */
+  const noteTranscriptGrowth = useCallback(() => {
+    lastTranscriptGrowthRef.current = Date.now();
+  }, []);
+
+  /**
    * Core observe call. Sends frame + transcript to Claude and handles response.
-   * `trigger` indicates what caused the call (for logging/tuning).
    */
   const fireObserve = useCallback(async (trigger: 'utterance_end' | 'proactive') => {
-    console.log(`[observe] fireObserve called, trigger=${trigger}`);
-
-    // Don't stack concurrent requests
-    if (inFlightRef.current) {
-      console.log('[observe] skipped: request in flight');
-      return;
-    }
+    if (inFlightRef.current) return;
 
     const opts = optionsRef.current;
     const frame = opts.getLatestFrame();
-    if (!frame) {
-      console.log('[observe] skipped: no frame available');
-      return;
-    }
+    if (!frame) return;
 
     const now = Date.now();
 
     // Enforce minimum gap between calls
-    if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) {
-      console.log(`[observe] skipped: too soon (${now - lastObserveTimeRef.current}ms since last)`);
-      return;
-    }
+    if (now - lastObserveTimeRef.current < MIN_OBSERVE_GAP_MS) return;
 
     const transcriptWindow = opts.getTranscriptWindow(120);
 
+    // Silence = time since last transcript growth (tracked externally)
+    const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
+
     // For proactive polls: only fire if user has been genuinely silent
     if (trigger === 'proactive') {
-      const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
     }
 
-    // Track transcript changes for silence detection
-    if (transcriptWindow.length !== lastTranscriptLengthRef.current) {
-      lastTranscriptLengthRef.current = transcriptWindow.length;
-      lastTranscriptChangeTimeRef.current = now;
-    }
+    // Update known length (for external tracking, not silence calc)
+    knownTranscriptLengthRef.current = transcriptWindow.length;
 
-    const secondsSilent = Math.floor((now - lastTranscriptChangeTimeRef.current) / 1000);
     const lastChunk = transcriptWindow.slice(-200);
     const userAskedDirectly = DIRECT_QUESTION_PATTERNS.some((p) => p.test(lastChunk));
-
-    console.log(`[observe] transcript (${transcriptWindow.length} chars): "${transcriptWindow.slice(-300)}"`);
-    console.log(`[observe] userAskedDirectly=${userAskedDirectly}, secondsSilent=${secondsSilent}`);
 
     // Track frame history
     const history = frameHistoryRef.current;
@@ -126,17 +121,18 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       history.shift();
     }
 
-    const prevFrames = history.slice(0, -1);
-    const secondsSinceLastObserve = lastObserveTimeRef.current === 0
+    // For direct questions, skip previous frames to reduce API latency
+    const prevFrames = userAskedDirectly ? [] : history.slice(0, -1);
+    const secondsSinceLastInterjection = lastSpeakTimeRef.current === 0
       ? 9999
-      : Math.floor((now - lastObserveTimeRef.current) / 1000);
+      : Math.floor((now - lastSpeakTimeRef.current) / 1000);
 
     const customPrompt = getObservePrompt();
     const body: ObserveRequest = {
       frame,
       previous_frames: prevFrames.length > 0 ? prevFrames : undefined,
       transcript_window: transcriptWindow,
-      seconds_since_last_interjection: secondsSinceLastObserve,
+      seconds_since_last_interjection: secondsSinceLastInterjection,
       seconds_silent: secondsSilent,
       previous_interjections: opts.getPreviousInterjections(),
       ...(customPrompt ? { system_prompt: customPrompt } : {}),
@@ -158,41 +154,38 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
         });
 
         if (!res.ok) {
-          console.error(`Observe API error: ${res.status} (attempt ${retries + 1})`);
           retries++;
           if (retries <= MAX_RETRIES) {
-            await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * retries));
+            await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
           }
           continue;
         }
 
         data = await res.json();
         break;
-      } catch (err) {
-        console.error(`Observe fetch error (attempt ${retries + 1}):`, err);
+      } catch {
         retries++;
         if (retries <= MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * retries));
+          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
         }
       }
     }
 
     if (!data) {
-      console.error('[observe] all retries failed, no data');
       inFlightRef.current = false;
       return;
     }
 
-    console.log(`[observe] response: speak=${data.speak}, message="${data.message?.slice(0, 80)}", reason=${data.reason}`);
     setObserveCallCount((c) => c + 1);
 
     if (data.speak && data.message) {
       setSpeakCount((c) => c + 1);
+      lastSpeakTimeRef.current = Date.now();
       opts.addInterjection(data.message, data.reason, Date.now());
       try {
         await opts.speak(data.message);
-      } catch (err) {
-        console.error('TTS error during interjection:', err);
+      } catch {
+        // TTS failed; interjection already logged in event log
       }
     } else {
       setSilentCount((c) => c + 1);
@@ -227,8 +220,9 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     inFlightRef.current = false;
     frameHistoryRef.current = [];
     lastObserveTimeRef.current = 0;
-    lastTranscriptLengthRef.current = 0;
-    lastTranscriptChangeTimeRef.current = Date.now();
+    lastSpeakTimeRef.current = 0;
+    knownTranscriptLengthRef.current = 0;
+    lastTranscriptGrowthRef.current = Date.now();
 
     proactiveTimerRef.current = setInterval(() => {
       fireObserve('proactive');
@@ -242,5 +236,5 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     };
   }, [options.isRecording, fireObserve]);
 
-  return { observeCallCount, speakCount, silentCount };
+  return { observeCallCount, speakCount, silentCount, noteTranscriptGrowth };
 }

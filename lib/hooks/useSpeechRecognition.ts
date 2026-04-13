@@ -32,7 +32,7 @@ const DEEPGRAM_PARAMS = [
   'language=en',
   'smart_format=true',
   'interim_results=true',
-  'utterance_end_ms=1500',
+  'utterance_end_ms=1000',
   'endpointing=300',
   'encoding=linear16',
   'sample_rate=16000',
@@ -162,7 +162,6 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
             // Deepgram fires UtteranceEnd when it detects end-of-speech
             if (msg.type === 'UtteranceEnd') {
-              console.log('[deepgram] UtteranceEnd event received');
               utteranceEndCbRef.current?.();
               return;
             }
