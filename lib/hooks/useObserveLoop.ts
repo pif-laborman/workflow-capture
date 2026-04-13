@@ -5,10 +5,10 @@ import { ObserveRequest, ObserveResponse } from '@/lib/types';
 import { getObservePrompt } from '@/lib/storage';
 
 const FRAME_HISTORY_SIZE = 3;
-/** Background poll interval for proactive questions during long silence (ms) */
-const PROACTIVE_POLL_MS = 18000;
+/** Background poll interval for proactive questions during silence (ms) */
+const PROACTIVE_POLL_MS = 8000;
 /** Minimum seconds of silence before the background poll fires an observe call */
-const PROACTIVE_SILENCE_THRESHOLD = 12;
+const PROACTIVE_SILENCE_THRESHOLD = 6;
 /** Minimum cooldown between any two observe calls (ms) */
 const MIN_OBSERVE_GAP_MS = 2000;
 /** Max retries on API error before giving up for this turn */
@@ -24,9 +24,7 @@ function isUserAskingQuestion(transcriptWindow: string): boolean {
   return lastLine.endsWith('?');
 }
 
-/** Debounce delay after narration (longer to avoid interrupting) */
-const NARRATION_DEBOUNCE_MS = 2500;
-/** Debounce delay after a question (shorter for quick response) */
+/** Debounce delay after a question (fast response) */
 const QUESTION_DEBOUNCE_MS = 300;
 
 export interface UseObserveLoopOptions {
@@ -200,13 +198,18 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     // Clear existing timer
     if (speechEndTimerRef.current) {
       clearTimeout(speechEndTimerRef.current);
+      speechEndTimerRef.current = null;
     }
-    // Questions get near-instant response; narration gets longer delay to avoid interrupting
+    // Only trigger observe for questions (ends with ?).
+    // Narration does NOT trigger observe; the proactive poll handles
+    // asking questions during genuine silence (6s+). This eliminates
+    // all mid-narration interruptions.
     const isQuestion = chunkText.trim().endsWith('?');
-    const delay = isQuestion ? QUESTION_DEBOUNCE_MS : NARRATION_DEBOUNCE_MS;
-    speechEndTimerRef.current = setTimeout(() => {
-      fireObserve('utterance_end');
-    }, delay);
+    if (isQuestion) {
+      speechEndTimerRef.current = setTimeout(() => {
+        fireObserve('utterance_end');
+      }, QUESTION_DEBOUNCE_MS);
+    }
   }, [fireObserve]);
 
   // Background proactive poll for long silences

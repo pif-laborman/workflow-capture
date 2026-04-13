@@ -57,8 +57,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
     contextParts.push('Conversation log: (empty, user has not spoken yet)');
   }
 
-  if (body.seconds_silent !== undefined && body.seconds_silent > 5) {
-    contextParts.push(`\nNOTE: The user has been SILENT for ${body.seconds_silent} seconds while the screen has been active. Consider asking what they are doing.`);
+  if (body.seconds_silent !== undefined && body.seconds_silent > 10) {
+    contextParts.push(`\nNOTE: The user has been silent for ${body.seconds_silent} seconds. They may be waiting for you to ask a question about what's on screen.`);
   }
 
   if (body.previous_interjections?.length) {
