@@ -8,7 +8,7 @@ const FRAME_HISTORY_SIZE = 3;
 /** Background poll interval for proactive questions during silence (ms) */
 const PROACTIVE_POLL_MS = 8000;
 /** Minimum seconds of silence before the background poll fires an observe call */
-const PROACTIVE_SILENCE_THRESHOLD = 6;
+const PROACTIVE_SILENCE_THRESHOLD = 4;
 /** Minimum cooldown between any two observe calls (ms) */
 const MIN_OBSERVE_GAP_MS = 2000;
 /** Max retries on API error before giving up for this turn */
