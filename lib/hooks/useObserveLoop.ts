@@ -107,6 +107,12 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       ? 9999
       : Math.floor((now - lastSpeakTimeRef.current) / 1000);
 
+    // Post-speak cooldown for utterance_end: don't fire right after Claude spoke or was interrupted
+    if (trigger === 'utterance_end' && secSinceSpoke < 4) {
+      console.log(`${t()} utterance_end: skipped (spoke ${secSinceSpoke}s ago, need 4s)`);
+      return;
+    }
+
     // Proactive poll guards
     if (trigger === 'proactive') {
       const sessionAge = now - sessionStartMs;
@@ -209,6 +215,11 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
           console.log(`${t()} tts: cancelled (user speaking) after ${ttsMs}ms`);
           lastSpeakTimeRef.current = Date.now();
           lastTranscriptGrowthRef.current = Date.now();
+          // Clear any pending debounce timer from before the interruption
+          if (speechEndTimerRef.current) {
+            clearTimeout(speechEndTimerRef.current);
+            speechEndTimerRef.current = null;
+          }
         }
       } catch {
         console.log(`${t()} tts: error after ${Date.now() - ttsStart}ms`);
