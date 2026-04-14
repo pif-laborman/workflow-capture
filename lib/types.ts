@@ -69,4 +69,5 @@ export interface SavedWorkflow {
   workflow: WorkflowDocument;
   session_events: SessionEvent[];
   transcript?: string;
+  map_svg?: string;
 }

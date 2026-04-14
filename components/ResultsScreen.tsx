@@ -290,6 +290,9 @@ export default function ResultsScreen() {
   const [sessionEvents, setSessionEvents] = useState(sessionData.events);
   const [workflowName, setWorkflowName] = useState(sessionData.workflowName);
   const [savedTranscript, setSavedTranscript] = useState('');
+  const [mapSvg, setMapSvg] = useState<string | null>(null);
+  const [mapGenerating, setMapGenerating] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
 
   // Load data on mount
   useState(() => {
@@ -302,6 +305,7 @@ export default function ResultsScreen() {
         setSessionEvents(found.session_events);
         setWorkflowName(found.name);
         setSavedTranscript(found.transcript || '');
+        if (found.map_svg) setMapSvg(found.map_svg);
       }
     } else {
       if (sessionData.workflowResult) {
@@ -427,6 +431,34 @@ export default function ResultsScreen() {
       return updated;
     });
   }, [persistChanges]);
+
+  // Generate process map
+  const handleGenerateMap = useCallback(async () => {
+    if (!editableWorkflow) return;
+    setMapGenerating(true);
+    setMapError(null);
+    try {
+      const res = await fetch('/api/generate-map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflow: editableWorkflow }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to generate map');
+      }
+      const data = await res.json();
+      setMapSvg(data.svg);
+      // Persist to localStorage
+      if (workflowId) {
+        updateWorkflow(workflowId, { map_svg: data.svg });
+      }
+    } catch (err) {
+      setMapError(err instanceof Error ? err.message : 'Failed to generate map');
+    } finally {
+      setMapGenerating(false);
+    }
+  }, [editableWorkflow, workflowId]);
 
   // Save on first render for newly processed workflows
   const doSave = useCallback(() => {
@@ -685,6 +717,31 @@ export default function ResultsScreen() {
           >
             + Add step
           </button>
+        </div>
+
+        {/* Process map section */}
+        <div className="results-section">
+          <div className="results-map-header">
+            <h2 className="results-section-heading">Process map</h2>
+            <button
+              className={mapSvg ? 'btn-outline' : 'btn-primary'}
+              onClick={handleGenerateMap}
+              disabled={mapGenerating}
+              data-testid="generate-map-btn"
+            >
+              {mapGenerating ? 'Generating...' : mapSvg ? 'Regenerate' : 'Generate map'}
+            </button>
+          </div>
+          {mapError && (
+            <p className="results-map-error">{mapError}</p>
+          )}
+          {mapSvg && (
+            <div
+              className="results-map-container"
+              data-testid="process-map"
+              dangerouslySetInnerHTML={{ __html: mapSvg }}
+            />
+          )}
         </div>
 
         {/* Open questions section */}
