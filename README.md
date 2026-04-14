@@ -86,10 +86,10 @@ Edit this file to change the interview style, question count, or mapping schema.
 
 ## Cost notes
 
-- **Deepgram:** ~$0.0043/min (Nova-2 pay-as-you-go)
+- **Deepgram:** $0.0092/min (Nova-2 pay-as-you-go)
 - **Claude Haiku:** ~$0.001 per observe call (small context, 128 max tokens)
 - **ElevenLabs:** credit-based; burns faster with frequent proactive questions
-- **Voxtral:** ~$0.01 per request (fallback only)
+- **Voxtral:** $0.016 per 1k characters (fallback only)
 
 A typical 10-minute session runs roughly 20-30 observe calls. Total cost per session is well under $1.
 
