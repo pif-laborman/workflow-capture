@@ -133,16 +133,36 @@ interface StepCardProps {
   step: WorkflowStep;
   onUpdate: (field: keyof WorkflowStep, value: string) => void;
   onDelete: () => void;
+  isDragOver?: boolean;
+  onDragStart: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
 }
 
-function StepCard({ step, onUpdate, onDelete }: StepCardProps) {
+function StepCard({ step, onUpdate, onDelete, isDragOver, onDragStart, onDragOver, onDrop, onDragEnd }: StepCardProps) {
   const [expanded, setExpanded] = useState(false);
   const confidence = getConfidence(step);
 
   return (
     <div
-      className="results-step-card card"
+      className={`results-step-card card ${isDragOver ? 'step-card-drag-over' : ''}`}
       data-testid={`step-card-${step.step_number}`}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        onDragOver(e);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDrop();
+      }}
+      onDragEnd={onDragEnd}
     >
       <div
         className="step-card-header"
@@ -156,6 +176,7 @@ function StepCard({ step, onUpdate, onDelete }: StepCardProps) {
           }
         }}
       >
+        <span className="step-card-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
         <span className="step-card-number" data-testid="step-number">
           {String(step.step_number).padStart(2, '0')}
         </span>
@@ -295,6 +316,24 @@ export default function ResultsScreen() {
         .filter((s) => s.step_number !== stepNumber)
         .map((s, i) => ({ ...s, step_number: i + 1 }));
       const updated = { ...prev, steps: filtered };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  // Drag and drop reordering
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+
+  const reorderSteps = useCallback((fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return;
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const steps = [...prev.steps];
+      const [moved] = steps.splice(fromIdx, 1);
+      steps.splice(toIdx, 0, moved);
+      const renumbered = steps.map((s, i) => ({ ...s, step_number: i + 1 }));
+      const updated = { ...prev, steps: renumbered };
       persistChanges(updated);
       return updated;
     });
@@ -588,12 +627,24 @@ export default function ResultsScreen() {
         <div className="results-section">
           <h2 className="results-section-heading" data-testid="steps-heading">Steps</h2>
           <div className="results-steps" data-testid="results-steps">
-            {workflow.steps.map((step) => (
+            {workflow.steps.map((step, idx) => (
               <StepCard
                 key={step.step_number}
                 step={step}
                 onUpdate={(field, value) => updateStep(step.step_number, field, value)}
                 onDelete={() => deleteStep(step.step_number)}
+                isDragOver={dropIdx === idx && dragIdx !== idx}
+                onDragStart={() => setDragIdx(idx)}
+                onDragOver={() => setDropIdx(idx)}
+                onDrop={() => {
+                  if (dragIdx !== null) reorderSteps(dragIdx, idx);
+                  setDragIdx(null);
+                  setDropIdx(null);
+                }}
+                onDragEnd={() => {
+                  setDragIdx(null);
+                  setDropIdx(null);
+                }}
               />
             ))}
           </div>

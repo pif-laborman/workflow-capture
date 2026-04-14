@@ -991,6 +991,34 @@ a {
   gap: var(--space-3);
 }
 
+.step-card-drag-handle {
+  cursor: grab;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  flex-shrink: 0;
+  opacity: 0.3;
+  transition: opacity 0.15s ease;
+  user-select: none;
+  line-height: 1;
+}
+
+.results-step-card:hover .step-card-drag-handle {
+  opacity: 0.7;
+}
+
+.step-card-drag-handle:active {
+  cursor: grabbing;
+}
+
+.step-card-drag-over {
+  border-color: var(--fill-action) !important;
+  box-shadow: 0 0 0 1px var(--fill-action);
+}
+
+.results-step-card[draggable="true"] {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
 .step-card-number {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
