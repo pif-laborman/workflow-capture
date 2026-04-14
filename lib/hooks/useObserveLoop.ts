@@ -125,8 +125,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     // Post-speak cooldown for utterance_end: don't fire right after Claude spoke or was interrupted
     // BUT: always let direct user questions (ending with ?) through immediately
-    if (trigger === 'utterance_end' && secSinceSpoke < 6 && !userAskedDirectly) {
-      console.log(`${t()} utterance_end: skipped (spoke ${secSinceSpoke}s ago, need 6s)`);
+    if (trigger === 'utterance_end' && secSinceSpoke < 4 && !userAskedDirectly) {
+      console.log(`${t()} utterance_end: skipped (spoke ${secSinceSpoke}s ago, need 4s)`);
       return;
     }
 
