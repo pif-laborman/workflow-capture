@@ -233,11 +233,11 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
           lastSpeakTimeRef.current = Date.now();
           lastTranscriptGrowthRef.current = Date.now();
           lastInterjectionWasInterruptedRef.current = true;
-          // Clear any pending debounce timer from before the interruption
-          if (speechEndTimerRef.current) {
-            clearTimeout(speechEndTimerRef.current);
-            speechEndTimerRef.current = null;
-          }
+          // Don't clear speechEndTimerRef here. The speech that caused
+          // the interrupt may have set a new timer (e.g. user asked a
+          // question). The 6s cooldown blocks stale reply timers, and
+          // direct questions bypass the cooldown, so it's safe to let
+          // any pending timer fire and be filtered by the guards.
         }
       } catch {
         console.log(`${t()} tts: error after ${Date.now() - ttsStart}ms`);
@@ -313,8 +313,10 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     inFlightRef.current = false;
     frameHistoryRef.current = [];
     lastObserveTimeRef.current = 0;
-    lastSpeakTimeRef.current = 0;
-    speakCountRef.current = 0;
+    // Greeting speaks immediately on session start, so initialize as if
+    // Claude just spoke and count it toward the question budget
+    lastSpeakTimeRef.current = Date.now();
+    speakCountRef.current = 1;
     lastInterjectionWasInterruptedRef.current = false;
     knownTranscriptLengthRef.current = 0;
     lastTranscriptGrowthRef.current = Date.now();
