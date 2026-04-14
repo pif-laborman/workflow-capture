@@ -33,7 +33,7 @@ function isUserAskingQuestion(transcriptWindow: string): boolean {
 /** Debounce delay after a question (fast response) */
 const QUESTION_DEBOUNCE_MS = 300;
 /** Debounce delay after answering Claude's question (faster than proactive, slower than question) */
-const REPLY_DEBOUNCE_MS = 2000;
+const REPLY_DEBOUNCE_MS = 1000;
 
 /** Relative timestamp for structured logging */
 let sessionStartMs = 0;
