@@ -11,6 +11,8 @@ const PROACTIVE_POLL_MS = 2000;
 const PROACTIVE_SILENCE_THRESHOLD = 6;
 /** Minimum cooldown between any two observe calls (ms) */
 const MIN_OBSERVE_GAP_MS = 2000;
+/** Grace period at session start: no proactive polls (ms) */
+const WARMUP_GRACE_MS = 15000;
 /** Max retries on API error before giving up for this turn */
 const MAX_RETRIES = 1;
 /** Retry delay (ms) */
@@ -107,6 +109,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     // Proactive poll guards
     if (trigger === 'proactive') {
+      const sessionAge = now - sessionStartMs;
+      if (sessionAge < WARMUP_GRACE_MS) return;
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
       if (secSinceSpoke < 6) {
         console.log(`${t()} proactive: skipped (spoke ${secSinceSpoke}s ago, need 6s)`);
