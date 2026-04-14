@@ -432,11 +432,12 @@ export default function ResultsScreen() {
     });
   }, [persistChanges]);
 
-  // Generate process map
+  // Generate process map (streamed to avoid Vercel timeout)
   const handleGenerateMap = useCallback(async () => {
     if (!editableWorkflow) return;
     setMapGenerating(true);
     setMapError(null);
+    setMapSvg(null);
     try {
       const res = await fetch('/api/generate-map', {
         method: 'POST',
@@ -447,11 +448,26 @@ export default function ResultsScreen() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to generate map');
       }
-      const data = await res.json();
-      setMapSvg(data.svg);
-      // Persist to localStorage
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+      const decoder = new TextDecoder();
+      let accumulated = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        accumulated += decoder.decode(value, { stream: true });
+      }
+      // Strip markdown fences if present
+      let svg = accumulated.trim();
+      if (svg.startsWith('```')) {
+        svg = svg.replace(/^```(?:svg|xml)?\s*/, '').replace(/\s*```$/, '');
+      }
+      if (!svg.includes('<svg')) {
+        throw new Error('Generated content is not valid SVG');
+      }
+      setMapSvg(svg);
       if (workflowId) {
-        updateWorkflow(workflowId, { map_svg: data.svg });
+        updateWorkflow(workflowId, { map_svg: svg });
       }
     } catch (err) {
       setMapError(err instanceof Error ? err.message : 'Failed to generate map');

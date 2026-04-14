@@ -1,6 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import type { WorkflowDocument } from '@/lib/types';
+
+export const maxDuration = 60;
 
 const MAP_SYSTEM_PROMPT = `You generate interactive SVG flowcharts from process descriptions. Output ONLY the raw SVG markup, no markdown fences, no explanation.
 
@@ -19,25 +21,24 @@ Follow these rules strictly:
 - Use readable font sizes: 14px for titles, 12px for subtitles
 - Add 20px padding between nodes vertically`;
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<Response> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return NextResponse.json({ error: 'No API key' }, { status: 500 });
+    return Response.json({ error: 'No API key' }, { status: 500 });
   }
 
   let body: { workflow: WorkflowDocument };
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    return Response.json({ error: 'Invalid request' }, { status: 400 });
   }
 
   const workflow = body.workflow;
   if (!workflow?.steps?.length) {
-    return NextResponse.json({ error: 'No steps provided' }, { status: 400 });
+    return Response.json({ error: 'No steps provided' }, { status: 400 });
   }
 
-  // Build the process spec from workflow steps
   const specLines = workflow.steps.map((s) => {
     let line = `${s.step_number}. ${s.action}`;
     if (s.description) line += ` - ${s.description}`;
@@ -57,7 +58,7 @@ ${workflow.open_questions.length > 0 ? `Open questions:\n${workflow.open_questio
   const client = new Anthropic({ apiKey });
 
   try {
-    const response = await client.messages.create({
+    const stream = client.messages.stream({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 8192,
       system: MAP_SYSTEM_PROMPT,
@@ -69,27 +70,30 @@ ${workflow.open_questions.length > 0 ? `Open questions:\n${workflow.open_questio
       ],
     });
 
-    let svg = '';
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        svg += block.text;
-      }
-    }
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const event of stream) {
+            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+              controller.enqueue(encoder.encode(event.delta.text));
+            }
+          }
+          controller.close();
+        } catch (err) {
+          controller.error(err);
+        }
+      },
+    });
 
-    // Strip markdown fences if present
-    svg = svg.trim();
-    if (svg.startsWith('```')) {
-      svg = svg.replace(/^```(?:svg|xml)?\s*/, '').replace(/\s*```$/, '');
-    }
-
-    // Validate it looks like SVG
-    if (!svg.includes('<svg')) {
-      return NextResponse.json({ error: 'Generated content is not SVG' }, { status: 500 });
-    }
-
-    return NextResponse.json({ svg });
+    return new Response(readable, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Transfer-Encoding': 'chunked',
+      },
+    });
   } catch (err) {
     console.error('Generate map error:', err);
-    return NextResponse.json({ error: 'Failed to generate map' }, { status: 500 });
+    return Response.json({ error: 'Failed to generate map' }, { status: 500 });
   }
 }
