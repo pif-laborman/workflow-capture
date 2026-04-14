@@ -15,6 +15,8 @@ const MIN_OBSERVE_GAP_MS = 2000;
 const WARMUP_GRACE_MS = 15000;
 /** Hard cap on speak=true responses per session (prompt says 10, enforce mechanically) */
 const MAX_SPEAK_COUNT = 10;
+/** How long the interrupt flag stays active (ms). After this, user has moved on. */
+const INTERRUPT_EXPIRY_MS = 10000;
 /** Max retries on API error before giving up for this turn */
 const MAX_RETRIES = 1;
 /** Retry delay (ms) */
@@ -75,8 +77,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const lastObserveTimeRef = useRef(0);
   const lastSpeakTimeRef = useRef(0);
   const speakCountRef = useRef(0);
-  /** True if the last Claude interjection was interrupted (user didn't hear the question) */
-  const lastInterjectionWasInterruptedRef = useRef(false);
+  /** Timestamp of last interruption (0 = not interrupted). Auto-expires after 10s. */
+  const lastInterruptTimeRef = useRef(0);
   const knownTranscriptLengthRef = useRef(0);
   const lastTranscriptGrowthRef = useRef(Date.now());
   const proactiveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -227,12 +229,12 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
         if (completed) {
           console.log(`${t()} tts: completed ${ttsMs}ms`);
           lastSpeakTimeRef.current = Date.now();
-          lastInterjectionWasInterruptedRef.current = false;
+          lastInterruptTimeRef.current = 0;
         } else {
           console.log(`${t()} tts: cancelled (user speaking) after ${ttsMs}ms`);
           lastSpeakTimeRef.current = Date.now();
           lastTranscriptGrowthRef.current = Date.now();
-          lastInterjectionWasInterruptedRef.current = true;
+          lastInterruptTimeRef.current = Date.now();
           // Don't clear speechEndTimerRef here. The speech that caused
           // the interrupt may have set a new timer (e.g. user asked a
           // question). The 6s cooldown blocks stale reply timers, and
@@ -272,9 +274,11 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     // Check if replying to Claude's last question.
     // Only counts as a reply if:
     // 1. This is the first or second user chunk after Claude spoke
-    // 2. Claude's last interjection was NOT interrupted (if it was, the user
-    //    didn't hear the question and is just continuing their narration)
-    if (!lastInterjectionWasInterruptedRef.current) {
+    // 2. Claude's last interjection was NOT interrupted recently (if it was,
+    //    the user didn't hear the question and is continuing narration)
+    const interruptedRecently = lastInterruptTimeRef.current > 0
+      && (Date.now() - lastInterruptTimeRef.current) < INTERRUPT_EXPIRY_MS;
+    if (!interruptedRecently) {
       const transcript = optionsRef.current.getTranscriptWindow(120);
       const lines = transcript.split('\n');
       const lastClaudeIdx = lines.findLastIndex((l) => l.startsWith('[CLAUDE]'));
@@ -317,7 +321,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     // Claude just spoke and count it toward the question budget
     lastSpeakTimeRef.current = Date.now();
     speakCountRef.current = 1;
-    lastInterjectionWasInterruptedRef.current = false;
+    lastInterruptTimeRef.current = 0;
     knownTranscriptLengthRef.current = 0;
     lastTranscriptGrowthRef.current = Date.now();
 
