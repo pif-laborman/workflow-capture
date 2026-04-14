@@ -8,9 +8,9 @@ const FRAME_HISTORY_SIZE = 3;
 /** Background poll interval for proactive questions during silence (ms) */
 const PROACTIVE_POLL_MS = 2000;
 /** Minimum seconds of silence before the background poll fires an observe call */
-const PROACTIVE_SILENCE_THRESHOLD = 4;
+const PROACTIVE_SILENCE_THRESHOLD = 8;
 /** Minimum cooldown between any two observe calls (ms) */
-const MIN_OBSERVE_GAP_MS = 2000;
+const MIN_OBSERVE_GAP_MS = 3000;
 /** Max retries on API error before giving up for this turn */
 const MAX_RETRIES = 1;
 /** Retry delay (ms) */
@@ -27,7 +27,7 @@ function isUserAskingQuestion(transcriptWindow: string): boolean {
 /** Debounce delay after a question (fast response) */
 const QUESTION_DEBOUNCE_MS = 300;
 /** Debounce delay after answering Claude's question (faster than proactive, slower than question) */
-const REPLY_DEBOUNCE_MS = 1500;
+const REPLY_DEBOUNCE_MS = 3000;
 
 /** Relative timestamp for structured logging */
 let sessionStartMs = 0;
@@ -70,6 +70,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const frameHistoryRef = useRef<string[]>([]);
   const lastObserveTimeRef = useRef(0);
   const lastSpeakTimeRef = useRef(0);
+  /** Tracks the last time TTS was interrupted by user speech */
+  const lastInterruptTimeRef = useRef(0);
   const knownTranscriptLengthRef = useRef(0);
   const lastTranscriptGrowthRef = useRef(Date.now());
   const proactiveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -97,14 +99,24 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const transcriptWindow = opts.getTranscriptWindow(120);
     const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
 
+    // Interrupt cooldown: if user recently interrupted Claude, back off significantly
+    const secSinceInterrupt = lastInterruptTimeRef.current === 0
+      ? 9999
+      : Math.floor((now - lastInterruptTimeRef.current) / 1000);
+    const interruptCooldown = trigger === 'proactive' ? 15 : 8;
+    if (secSinceInterrupt < interruptCooldown) {
+      console.log(`${t()} ${trigger}: skipped (interrupted ${secSinceInterrupt}s ago, need ${interruptCooldown}s)`);
+      return;
+    }
+
     // Proactive poll guards
     if (trigger === 'proactive') {
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
       const secSinceSpoke = lastSpeakTimeRef.current === 0
         ? 9999
         : Math.floor((now - lastSpeakTimeRef.current) / 1000);
-      if (secSinceSpoke < 5) {
-        console.log(`${t()} proactive: skipped (spoke ${secSinceSpoke}s ago, need 5s)`);
+      if (secSinceSpoke < 10) {
+        console.log(`${t()} proactive: skipped (spoke ${secSinceSpoke}s ago, need 10s)`);
         return;
       }
       if (transcriptWindow.length === knownTranscriptLengthRef.current) return;
@@ -194,7 +206,9 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
           console.log(`${t()} tts: completed ${ttsMs}ms`);
           lastSpeakTimeRef.current = Date.now();
         } else {
-          console.log(`${t()} tts: cancelled after ${ttsMs}ms`);
+          console.log(`${t()} tts: cancelled (interrupted) after ${ttsMs}ms`);
+          lastSpeakTimeRef.current = Date.now();
+          lastInterruptTimeRef.current = Date.now();
         }
       } catch {
         console.log(`${t()} tts: error after ${Date.now() - ttsStart}ms`);
@@ -258,6 +272,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     frameHistoryRef.current = [];
     lastObserveTimeRef.current = 0;
     lastSpeakTimeRef.current = 0;
+    lastInterruptTimeRef.current = 0;
     knownTranscriptLengthRef.current = 0;
     lastTranscriptGrowthRef.current = Date.now();
 
