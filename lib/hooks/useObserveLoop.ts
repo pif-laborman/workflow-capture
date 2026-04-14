@@ -13,6 +13,8 @@ const PROACTIVE_SILENCE_THRESHOLD = 6;
 const MIN_OBSERVE_GAP_MS = 2000;
 /** Grace period at session start: no proactive polls (ms) */
 const WARMUP_GRACE_MS = 15000;
+/** Hard cap on speak=true responses per session (prompt says 10, enforce mechanically) */
+const MAX_SPEAK_COUNT = 10;
 /** Max retries on API error before giving up for this turn */
 const MAX_RETRIES = 1;
 /** Retry delay (ms) */
@@ -72,6 +74,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const frameHistoryRef = useRef<string[]>([]);
   const lastObserveTimeRef = useRef(0);
   const lastSpeakTimeRef = useRef(0);
+  const speakCountRef = useRef(0);
   /** True if the last Claude interjection was interrupted (user didn't hear the question) */
   const lastInterjectionWasInterruptedRef = useRef(false);
   const knownTranscriptLengthRef = useRef(0);
@@ -87,6 +90,14 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const fireObserve = useCallback(async (trigger: 'utterance_end' | 'proactive') => {
     if (inFlightRef.current) {
       console.log(`${t()} observe: skipped (in flight) trigger=${trigger}`);
+      return;
+    }
+
+    // Hard question budget: stop all observe calls once limit reached
+    if (speakCountRef.current >= MAX_SPEAK_COUNT) {
+      if (trigger === 'utterance_end') {
+        console.log(`${t()} observe: skipped (budget exhausted: ${speakCountRef.current}/${MAX_SPEAK_COUNT})`);
+      }
       return;
     }
 
@@ -110,8 +121,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       : Math.floor((now - lastSpeakTimeRef.current) / 1000);
 
     // Post-speak cooldown for utterance_end: don't fire right after Claude spoke or was interrupted
-    if (trigger === 'utterance_end' && secSinceSpoke < 4) {
-      console.log(`${t()} utterance_end: skipped (spoke ${secSinceSpoke}s ago, need 4s)`);
+    if (trigger === 'utterance_end' && secSinceSpoke < 6) {
+      console.log(`${t()} utterance_end: skipped (spoke ${secSinceSpoke}s ago, need 6s)`);
       return;
     }
 
@@ -204,7 +215,9 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     console.log(`${t()} observe: API ${apiMs}ms speak=${data.speak} "${data.message?.slice(0, 50)}"`);
 
     if (data.speak && data.message) {
+      speakCountRef.current += 1;
       setSpeakCount((c) => c + 1);
+      console.log(`${t()} question ${speakCountRef.current}/${MAX_SPEAK_COUNT}: "${data.message.slice(0, 60)}"`);
       opts.addInterjection(data.message, data.reason, Date.now());
       const ttsStart = Date.now();
       try {
@@ -300,6 +313,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     frameHistoryRef.current = [];
     lastObserveTimeRef.current = 0;
     lastSpeakTimeRef.current = 0;
+    speakCountRef.current = 0;
     lastInterjectionWasInterruptedRef.current = false;
     knownTranscriptLengthRef.current = 0;
     lastTranscriptGrowthRef.current = Date.now();
