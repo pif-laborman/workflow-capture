@@ -9,6 +9,7 @@ import {
   getWorkflow as loadWorkflow,
   updateWorkflow,
 } from '@/lib/storage';
+import { getLogs } from '@/lib/logBuffer';
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -246,6 +247,35 @@ function StepCard({ step, onUpdate, onDelete, isDragOver, onDragStart, onDragOve
         </div>
       )}
     </div>
+  );
+}
+
+function CopyLogsButton() {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    const logs = getLogs();
+    if (!logs) return;
+    try {
+      await navigator.clipboard.writeText(logs);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback: open in new tab
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(`<pre>${logs.replace(/</g, '&lt;')}</pre>`);
+        w.document.close();
+      }
+    }
+  };
+  return (
+    <button
+      className="btn-outline"
+      onClick={handleCopy}
+      data-testid="copy-logs-btn"
+    >
+      {copied ? 'Copied!' : 'Copy logs'}
+    </button>
   );
 }
 
@@ -722,6 +752,7 @@ export default function ResultsScreen() {
           >
             New capture
           </button>
+          <CopyLogsButton />
         </div>
       </div>
     </div>

@@ -9,6 +9,7 @@ import { useSpeechRecognition } from '@/lib/hooks/useSpeechRecognition';
 import { useTTS } from '@/lib/hooks/useTTS';
 import { useEventLog } from '@/lib/hooks/useEventLog';
 import { useObserveLoop } from '@/lib/hooks/useObserveLoop';
+import { startCapture, stopCapture } from '@/lib/logBuffer';
 import RecordingScreen from './RecordingScreen';
 import type { Interjection, CapturedFrame } from './RecordingScreen';
 import type { InterjectionPayload, FramePayload } from '@/lib/hooks/useEventLog';
@@ -165,9 +166,13 @@ export default function RecordingController() {
         }
         setCountdown(null);
 
-        // Go straight to recording; no spoken intro
+        // Start recording, then speak opening line
+        startCapture();
         setState(AppState.RecordingActive);
         speechRecognition.start(mediaCapture.micStream || undefined);
+        const greeting = "I'm here to listen. What's a process you work through regularly that you'd like to walk me through?";
+        eventLog.addInterjection(greeting, 'scoping', Date.now());
+        tts.speak(greeting);
       } catch {
         // If capture fails, go back to NewCapture
         startedRef.current = false;
@@ -182,6 +187,7 @@ export default function RecordingController() {
 
   // Handle stop
   const handleStop = useCallback(() => {
+    stopCapture();
     mediaCapture.stopCapture();
     speechRecognition.stop();
     tts.cancel();
