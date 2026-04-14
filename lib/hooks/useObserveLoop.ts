@@ -72,6 +72,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
   const frameHistoryRef = useRef<string[]>([]);
   const lastObserveTimeRef = useRef(0);
   const lastSpeakTimeRef = useRef(0);
+  /** True if the last Claude interjection was interrupted (user didn't hear the question) */
+  const lastInterjectionWasInterruptedRef = useRef(false);
   const knownTranscriptLengthRef = useRef(0);
   const lastTranscriptGrowthRef = useRef(Date.now());
   const proactiveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -211,10 +213,12 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
         if (completed) {
           console.log(`${t()} tts: completed ${ttsMs}ms`);
           lastSpeakTimeRef.current = Date.now();
+          lastInterjectionWasInterruptedRef.current = false;
         } else {
           console.log(`${t()} tts: cancelled (user speaking) after ${ttsMs}ms`);
           lastSpeakTimeRef.current = Date.now();
           lastTranscriptGrowthRef.current = Date.now();
+          lastInterjectionWasInterruptedRef.current = true;
           // Clear any pending debounce timer from before the interruption
           if (speechEndTimerRef.current) {
             clearTimeout(speechEndTimerRef.current);
@@ -252,20 +256,26 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     }
 
     // Check if replying to Claude's last question.
-    // Only counts as a reply if this is the first or second user chunk
-    // after Claude spoke. Beyond that, the user has moved on to narrating.
-    const transcript = optionsRef.current.getTranscriptWindow(120);
-    const lines = transcript.split('\n');
-    const lastClaudeIdx = lines.findLastIndex((l) => l.startsWith('[CLAUDE]'));
-    if (lastClaudeIdx >= 0) {
-      const userLinesAfterClaude = lines.slice(lastClaudeIdx + 1).filter((l) => l.startsWith('[USER]'));
-      if (userLinesAfterClaude.length <= 2) {
-        console.log(`${t()} debounce: reply detected (${userLinesAfterClaude.length} chunks after Claude), ${REPLY_DEBOUNCE_MS}ms timer`);
-        speechEndTimerRef.current = setTimeout(() => {
-          fireObserve('utterance_end');
-        }, REPLY_DEBOUNCE_MS);
-        return;
+    // Only counts as a reply if:
+    // 1. This is the first or second user chunk after Claude spoke
+    // 2. Claude's last interjection was NOT interrupted (if it was, the user
+    //    didn't hear the question and is just continuing their narration)
+    if (!lastInterjectionWasInterruptedRef.current) {
+      const transcript = optionsRef.current.getTranscriptWindow(120);
+      const lines = transcript.split('\n');
+      const lastClaudeIdx = lines.findLastIndex((l) => l.startsWith('[CLAUDE]'));
+      if (lastClaudeIdx >= 0) {
+        const userLinesAfterClaude = lines.slice(lastClaudeIdx + 1).filter((l) => l.startsWith('[USER]'));
+        if (userLinesAfterClaude.length <= 2) {
+          console.log(`${t()} debounce: reply detected (${userLinesAfterClaude.length} chunks after Claude), ${REPLY_DEBOUNCE_MS}ms timer`);
+          speechEndTimerRef.current = setTimeout(() => {
+            fireObserve('utterance_end');
+          }, REPLY_DEBOUNCE_MS);
+          return;
+        }
       }
+    } else {
+      console.log(`${t()} transcript: post-interrupt "${preview}" (not a reply, Claude was interrupted)`);
     }
     // Narration: no timer, proactive poll handles it
     console.log(`${t()} transcript: narration "${preview}" (no trigger)`);
@@ -290,6 +300,7 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     frameHistoryRef.current = [];
     lastObserveTimeRef.current = 0;
     lastSpeakTimeRef.current = 0;
+    lastInterjectionWasInterruptedRef.current = false;
     knownTranscriptLengthRef.current = 0;
     lastTranscriptGrowthRef.current = Date.now();
 
