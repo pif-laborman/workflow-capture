@@ -84,7 +84,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ObserveRe
 
     const stream = client.messages.stream({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 256,
+      max_tokens: 128,
       system: body.system_prompt || OBSERVE_SYSTEM_PROMPT,
       messages: [
         {
