@@ -285,10 +285,13 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       if (lastClaudeIdx >= 0) {
         const userLinesAfterClaude = lines.slice(lastClaudeIdx + 1).filter((l) => l.startsWith('[USER]'));
         if (userLinesAfterClaude.length <= 2) {
-          console.log(`${t()} debounce: reply detected (${userLinesAfterClaude.length} chunks after Claude), ${REPLY_DEBOUNCE_MS}ms timer`);
+          // First chunk: user just started answering, use longer debounce
+          // Second chunk: user is wrapping up, use shorter debounce
+          const debounceMs = userLinesAfterClaude.length === 1 ? REPLY_DEBOUNCE_MS * 2 : REPLY_DEBOUNCE_MS;
+          console.log(`${t()} debounce: reply detected (${userLinesAfterClaude.length} chunks after Claude), ${debounceMs}ms timer`);
           speechEndTimerRef.current = setTimeout(() => {
             fireObserve('utterance_end');
-          }, REPLY_DEBOUNCE_MS);
+          }, debounceMs);
           return;
         }
       }
