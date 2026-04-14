@@ -227,16 +227,21 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       return;
     }
 
-    // Check if replying to Claude's last question
+    // Check if replying to Claude's last question.
+    // Only counts as a reply if this is the first or second user chunk
+    // after Claude spoke. Beyond that, the user has moved on to narrating.
     const transcript = optionsRef.current.getTranscriptWindow(120);
     const lines = transcript.split('\n');
     const lastClaudeIdx = lines.findLastIndex((l) => l.startsWith('[CLAUDE]'));
-    const lastUserIdx = lines.findLastIndex((l) => l.startsWith('[USER]'));
-    if (lastClaudeIdx >= 0 && lastUserIdx > lastClaudeIdx) {
-      console.log(`${t()} debounce: reply detected, ${REPLY_DEBOUNCE_MS}ms timer`);
-      speechEndTimerRef.current = setTimeout(() => {
-        fireObserve('utterance_end');
-      }, REPLY_DEBOUNCE_MS);
+    if (lastClaudeIdx >= 0) {
+      const userLinesAfterClaude = lines.slice(lastClaudeIdx + 1).filter((l) => l.startsWith('[USER]'));
+      if (userLinesAfterClaude.length <= 2) {
+        console.log(`${t()} debounce: reply detected (${userLinesAfterClaude.length} chunks after Claude), ${REPLY_DEBOUNCE_MS}ms timer`);
+        speechEndTimerRef.current = setTimeout(() => {
+          fireObserve('utterance_end');
+        }, REPLY_DEBOUNCE_MS);
+        return;
+      }
     }
     // Otherwise: narration, no timer. Proactive poll handles it.
   }, [fireObserve]);
