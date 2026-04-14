@@ -31,6 +31,14 @@ export function deleteWorkflow(id: string): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(workflows));
 }
 
+export function updateWorkflow(id: string, patch: Partial<SavedWorkflow>): void {
+  const workflows = getWorkflows();
+  const idx = workflows.findIndex(w => w.id === id);
+  if (idx === -1) return;
+  workflows[idx] = { ...workflows[idx], ...patch };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(workflows));
+}
+
 export function getObservePrompt(): string | null {
   try {
     return localStorage.getItem(PROMPT_KEY);

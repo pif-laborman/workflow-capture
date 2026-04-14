@@ -1,10 +1,14 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppState } from '@/lib/state';
 import { AppState, EventType, WorkflowDocument, WorkflowStep } from '@/lib/types';
-import { saveWorkflow as persistWorkflow, getWorkflow as loadWorkflow } from '@/lib/storage';
+import {
+  saveWorkflow as persistWorkflow,
+  getWorkflow as loadWorkflow,
+  updateWorkflow,
+} from '@/lib/storage';
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -16,7 +20,6 @@ function formatDuration(ms: number): string {
 
 function getConfidence(step: WorkflowStep): 'high' | 'medium' | 'low' {
   if (step.confidence) return step.confidence;
-  // Derive from notes: empty notes = high, short notes = medium, long = low
   if (!step.notes || step.notes.trim().length === 0) return 'high';
   if (step.notes.trim().length > 100) return 'low';
   return 'medium';
@@ -26,11 +29,113 @@ function confidenceLabel(c: 'high' | 'medium' | 'low'): string {
   return c.charAt(0).toUpperCase() + c.slice(1);
 }
 
-interface StepCardProps {
-  step: WorkflowStep;
+// Inline editable text field
+interface EditableFieldProps {
+  value: string;
+  onSave: (value: string) => void;
+  multiline?: boolean;
+  className?: string;
+  placeholder?: string;
 }
 
-function StepCard({ step }: StepCardProps) {
+function EditableField({ value, onSave, multiline, className, placeholder }: EditableFieldProps) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  // Sync draft when value changes externally
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed !== value) {
+      onSave(trimmed);
+    }
+  };
+
+  const cancel = () => {
+    setEditing(false);
+    setDraft(value);
+  };
+
+  if (editing) {
+    const sharedProps = {
+      value: draft,
+      onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+        setDraft(e.target.value),
+      onBlur: commit,
+      onKeyDown: (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && !multiline) {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === 'Enter' && multiline && e.metaKey) {
+          e.preventDefault();
+          commit();
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancel();
+        }
+      },
+      className: `editable-input ${className || ''}`,
+      placeholder,
+    };
+
+    if (multiline) {
+      return (
+        <textarea
+          ref={inputRef as React.RefObject<HTMLTextAreaElement>}
+          rows={3}
+          {...sharedProps}
+        />
+      );
+    }
+    return (
+      <input
+        ref={inputRef as React.RefObject<HTMLInputElement>}
+        type="text"
+        {...sharedProps}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={`editable-value ${className || ''} ${!value ? 'editable-placeholder' : ''}`}
+      onClick={() => setEditing(true)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setEditing(true);
+        }
+      }}
+      title="Click to edit"
+    >
+      {value || placeholder || 'Click to add...'}
+    </span>
+  );
+}
+
+interface StepCardProps {
+  step: WorkflowStep;
+  onUpdate: (field: keyof WorkflowStep, value: string) => void;
+  onDelete: () => void;
+}
+
+function StepCard({ step, onUpdate, onDelete }: StepCardProps) {
   const [expanded, setExpanded] = useState(false);
   const confidence = getConfidence(step);
 
@@ -38,17 +143,19 @@ function StepCard({ step }: StepCardProps) {
     <div
       className="results-step-card card"
       data-testid={`step-card-${step.step_number}`}
-      onClick={() => setExpanded(!expanded)}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          setExpanded(!expanded);
-        }
-      }}
     >
-      <div className="step-card-header">
+      <div
+        className="step-card-header"
+        onClick={() => setExpanded(!expanded)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }
+        }}
+      >
         <span className="step-card-number" data-testid="step-number">
           {String(step.step_number).padStart(2, '0')}
         </span>
@@ -66,19 +173,55 @@ function StepCard({ step }: StepCardProps) {
       {expanded && (
         <div className="step-card-details" data-testid="step-details">
           <div className="step-detail-row">
+            <span className="step-detail-label">action</span>
+            <EditableField
+              value={step.action}
+              onSave={(v) => onUpdate('action', v)}
+              className="step-detail-value"
+              placeholder="What happens in this step"
+            />
+          </div>
+          <div className="step-detail-row">
             <span className="step-detail-label">intent</span>
-            <span className="step-detail-value">{step.description}</span>
+            <EditableField
+              value={step.description}
+              onSave={(v) => onUpdate('description', v)}
+              className="step-detail-value"
+              multiline
+              placeholder="Why this step exists"
+            />
           </div>
           <div className="step-detail-row">
             <span className="step-detail-label">screen_context</span>
-            <span className="step-detail-value">{step.ui_element}</span>
+            <EditableField
+              value={step.ui_element}
+              onSave={(v) => onUpdate('ui_element', v)}
+              className="step-detail-value"
+              placeholder="UI element or screen area"
+            />
           </div>
-          {step.notes && step.notes.trim().length > 0 && (
-            <div className="step-detail-row">
-              <span className="step-detail-label">open_questions</span>
-              <span className="step-detail-value">{step.notes}</span>
-            </div>
-          )}
+          <div className="step-detail-row">
+            <span className="step-detail-label">notes</span>
+            <EditableField
+              value={step.notes}
+              onSave={(v) => onUpdate('notes', v)}
+              className="step-detail-value"
+              multiline
+              placeholder="Additional notes"
+            />
+          </div>
+          <div className="step-card-actions">
+            <button
+              className="btn-delete-step"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              title="Remove this step"
+            >
+              Remove step
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -89,49 +232,136 @@ export default function ResultsScreen() {
   const { sessionData, setSessionData, setState, selectedWorkflowId, setSelectedWorkflowId } = useAppState();
   const router = useRouter();
 
-  // Load workflow from selectedWorkflowId (viewing saved) or sessionData (just processed)
-  let workflow: WorkflowDocument | null = null;
-  let durationMs = 0;
-  let sessionEvents = sessionData.events;
-  let workflowName = sessionData.workflowName;
-  let savedTranscript = '';
+  // Editable workflow state
+  const [editableWorkflow, setEditableWorkflow] = useState<WorkflowDocument | null>(null);
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
+  const [durationMs, setDurationMs] = useState(0);
+  const [sessionEvents, setSessionEvents] = useState(sessionData.events);
+  const [workflowName, setWorkflowName] = useState(sessionData.workflowName);
+  const [savedTranscript, setSavedTranscript] = useState('');
 
-  if (selectedWorkflowId) {
-    const found = loadWorkflow(selectedWorkflowId);
-    if (found) {
-      workflow = found.workflow;
-      durationMs = found.duration_ms;
-      sessionEvents = found.session_events;
-      workflowName = found.name;
-      savedTranscript = found.transcript || '';
-    }
-  } else {
-    workflow = sessionData.workflowResult;
-    if (sessionData.events.length >= 2) {
-      const timestamps = sessionData.events.map(e => e.timestamp_ms);
-      durationMs = Math.max(...timestamps) - Math.min(...timestamps);
-    }
-  }
-
-  // Build transcript from events (for freshly processed workflows)
-  // Interleaves user speech and Duvo interjections chronologically
-  const transcript = savedTranscript || sessionEvents
-    .filter((e) => e.type === EventType.Transcript || e.type === EventType.Interjection)
-    .map((e) => {
-      if (e.type === EventType.Interjection) {
-        const p = e.payload as { message: string };
-        return `Duvo: ${p.message}`;
+  // Load data on mount
+  useState(() => {
+    if (selectedWorkflowId) {
+      const found = loadWorkflow(selectedWorkflowId);
+      if (found) {
+        setEditableWorkflow(structuredClone(found.workflow));
+        setWorkflowId(found.id);
+        setDurationMs(found.duration_ms);
+        setSessionEvents(found.session_events);
+        setWorkflowName(found.name);
+        setSavedTranscript(found.transcript || '');
       }
-      const p = e.payload as { text: string; isFinal: boolean };
-      return p.isFinal ? `You: ${p.text}` : '';
-    })
-    .filter(Boolean)
-    .join('\n');
+    } else {
+      if (sessionData.workflowResult) {
+        setEditableWorkflow(structuredClone(sessionData.workflowResult));
+      }
+      if (sessionData.events.length >= 2) {
+        const timestamps = sessionData.events.map(e => e.timestamp_ms);
+        setDurationMs(Math.max(...timestamps) - Math.min(...timestamps));
+      }
+    }
+  });
 
-  // Save to localStorage on first render of a new workflow (not viewing a saved one)
-  // Strip base64 frame data to stay within localStorage's 5MB limit
+  // Persist changes to localStorage
+  const persistChanges = useCallback((updated: WorkflowDocument) => {
+    if (!workflowId) return;
+    try {
+      updateWorkflow(workflowId, { workflow: updated });
+    } catch {
+      // Ignore storage errors
+    }
+  }, [workflowId]);
+
+  // Step mutations
+  const updateStep = useCallback((stepNumber: number, field: keyof WorkflowStep, value: string) => {
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const updated = {
+        ...prev,
+        steps: prev.steps.map((s) =>
+          s.step_number === stepNumber ? { ...s, [field]: value } : s
+        ),
+      };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  const deleteStep = useCallback((stepNumber: number) => {
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const filtered = prev.steps
+        .filter((s) => s.step_number !== stepNumber)
+        .map((s, i) => ({ ...s, step_number: i + 1 }));
+      const updated = { ...prev, steps: filtered };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  const addStep = useCallback(() => {
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const newStep: WorkflowStep = {
+        step_number: prev.steps.length + 1,
+        title: '',
+        description: '',
+        ui_element: '',
+        action: 'New step',
+        notes: '',
+        screenshot_timestamp_ms: null,
+      };
+      const updated = { ...prev, steps: [...prev.steps, newStep] };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  // Open question mutations
+  const updateQuestion = useCallback((index: number, value: string) => {
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const questions = [...prev.open_questions];
+      questions[index] = value;
+      const updated = { ...prev, open_questions: questions };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  const deleteQuestion = useCallback((index: number) => {
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const questions = prev.open_questions.filter((_, i) => i !== index);
+      const updated = { ...prev, open_questions: questions };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  const addQuestion = useCallback(() => {
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, open_questions: [...prev.open_questions, ''] };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  // Workflow-level field updates
+  const updateWorkflowField = useCallback((field: 'name' | 'description' | 'summary', value: string) => {
+    setEditableWorkflow((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, [field]: value };
+      persistChanges(updated);
+      return updated;
+    });
+  }, [persistChanges]);
+
+  // Save on first render for newly processed workflows
   const doSave = useCallback(() => {
-    if (!workflow || selectedWorkflowId) return;
+    if (!editableWorkflow || selectedWorkflowId) return;
     try {
       const lightEvents = sessionEvents.map((e) => {
         if (e.type === EventType.Frame) {
@@ -142,7 +372,6 @@ export default function ResultsScreen() {
         }
         return e;
       });
-      // Extract full transcript with both user and Duvo responses
       const transcript = sessionEvents
         .filter((e) => e.type === EventType.Transcript || e.type === EventType.Interjection)
         .map((e) => {
@@ -156,15 +385,18 @@ export default function ResultsScreen() {
         .filter(Boolean)
         .join('\n');
 
+      const id = crypto.randomUUID();
       persistWorkflow({
-        id: crypto.randomUUID(),
-        name: workflowName || workflow.name,
+        id,
+        name: workflowName || editableWorkflow.name,
         date: new Date().toISOString(),
         duration_ms: durationMs,
-        workflow,
+        workflow: editableWorkflow,
         session_events: lightEvents,
         transcript: transcript || undefined,
       });
+      setWorkflowId(id);
+      setSavedTranscript(transcript);
     } catch {
       // Ignore storage errors
     }
@@ -176,7 +408,21 @@ export default function ResultsScreen() {
     doSave();
   });
 
-  if (!workflow) {
+  // Build transcript
+  const transcript = savedTranscript || sessionEvents
+    .filter((e) => e.type === EventType.Transcript || e.type === EventType.Interjection)
+    .map((e) => {
+      if (e.type === EventType.Interjection) {
+        const p = e.payload as { message: string };
+        return `Duvo: ${p.message}`;
+      }
+      const p = e.payload as { text: string; isFinal: boolean };
+      return p.isFinal ? `You: ${p.text}` : '';
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  if (!editableWorkflow) {
     return (
       <div className="results-screen" data-testid="results-screen">
         <div className="results-content">
@@ -195,6 +441,7 @@ export default function ResultsScreen() {
     );
   }
 
+  const workflow = editableWorkflow;
   const stepCount = workflow.steps.length;
   const questionCount = workflow.open_questions.length;
 
@@ -243,7 +490,6 @@ export default function ResultsScreen() {
     setSelectedWorkflowId(null);
     setSessionData({ workflowName: '', events: [], workflowResult: null });
     router.push('/');
-    // Small delay to ensure navigation, then set state
     setTimeout(() => setState(AppState.NewCapture), 50);
   };
 
@@ -253,8 +499,28 @@ export default function ResultsScreen() {
         {/* Header */}
         <div className="results-header">
           <div className="results-success-icon" data-testid="results-success-icon">✓</div>
-          <h1 className="results-title" data-testid="results-title">{workflow.name}</h1>
+          <h1 className="results-title" data-testid="results-title">
+            <EditableField
+              value={workflow.name}
+              onSave={(v) => updateWorkflowField('name', v)}
+              className="editable-title"
+              placeholder="Workflow name"
+            />
+          </h1>
         </div>
+
+        {/* Description */}
+        {(workflow.description || workflowId) && (
+          <div className="results-description">
+            <EditableField
+              value={workflow.description}
+              onSave={(v) => updateWorkflowField('description', v)}
+              className="editable-description"
+              multiline
+              placeholder="Add a description..."
+            />
+          </div>
+        )}
 
         {/* Stats row */}
         <div className="results-stats" data-testid="results-stats">
@@ -323,26 +589,69 @@ export default function ResultsScreen() {
           <h2 className="results-section-heading" data-testid="steps-heading">Steps</h2>
           <div className="results-steps" data-testid="results-steps">
             {workflow.steps.map((step) => (
-              <StepCard key={step.step_number} step={step} />
+              <StepCard
+                key={step.step_number}
+                step={step}
+                onUpdate={(field, value) => updateStep(step.step_number, field, value)}
+                onDelete={() => deleteStep(step.step_number)}
+              />
             ))}
           </div>
+          <button
+            className="btn-add-step"
+            onClick={addStep}
+            data-testid="add-step-btn"
+          >
+            + Add step
+          </button>
         </div>
 
         {/* Open questions section */}
-        {questionCount > 0 && (
-          <div className="results-questions-section" data-testid="results-questions">
-            <h2 className="results-section-heading">Open questions</h2>
-            <p className="results-questions-explanation">
-              These questions were identified during the workflow analysis but remain unresolved.
-              Consider addressing them to improve the workflow documentation.
-            </p>
-            <ol className="results-questions-list" data-testid="questions-list">
-              {workflow.open_questions.map((q, i) => (
-                <li key={i} className="results-question-item" data-testid={`question-${i}`}>
-                  {q}
-                </li>
-              ))}
-            </ol>
+        <div className="results-questions-section" data-testid="results-questions">
+          <h2 className="results-section-heading">Open questions</h2>
+          {questionCount === 0 && (
+            <p className="results-questions-explanation">No open questions.</p>
+          )}
+          <ol className="results-questions-list" data-testid="questions-list">
+            {workflow.open_questions.map((q, i) => (
+              <li key={i} className="results-question-item" data-testid={`question-${i}`}>
+                <EditableField
+                  value={q}
+                  onSave={(v) => updateQuestion(i, v)}
+                  className="editable-question"
+                  placeholder="Type a question..."
+                />
+                <button
+                  className="btn-delete-question"
+                  onClick={() => deleteQuestion(i)}
+                  title="Remove question"
+                  aria-label="Remove question"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ol>
+          <button
+            className="btn-add-step"
+            onClick={addQuestion}
+            data-testid="add-question-btn"
+          >
+            + Add question
+          </button>
+        </div>
+
+        {/* Summary */}
+        {(workflow.summary || workflowId) && (
+          <div className="results-section">
+            <h2 className="results-section-heading">Summary</h2>
+            <EditableField
+              value={workflow.summary}
+              onSave={(v) => updateWorkflowField('summary', v)}
+              className="editable-summary"
+              multiline
+              placeholder="Process summary..."
+            />
           </div>
         )}
 

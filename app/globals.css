@@ -1147,6 +1147,143 @@ a {
 }
 
 /* ==========================================================================
+   Inline Editing
+   ========================================================================== */
+
+.editable-value {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1);
+  transition: background 0.15s ease;
+}
+
+.editable-value:hover {
+  background: var(--bg-warm);
+}
+
+.editable-placeholder {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.editable-input {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text-primary);
+  background: var(--bg-page);
+  border: 1px solid var(--fill-action);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1);
+  width: 100%;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+}
+
+.editable-title {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: 700;
+}
+
+.editable-description,
+.editable-summary {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.results-description {
+  margin-top: calc(var(--space-2) * -1);
+  margin-bottom: var(--space-4);
+}
+
+/* Add step / Add question buttons */
+
+.btn-add-step {
+  display: block;
+  width: 100%;
+  padding: var(--space-3);
+  margin-top: var(--space-3);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.btn-add-step:hover {
+  border-color: var(--text-tertiary);
+  color: var(--text-secondary);
+}
+
+/* Delete step button */
+
+.step-card-actions {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-delete-step {
+  background: none;
+  border: none;
+  color: var(--color-error);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.btn-delete-step:hover {
+  opacity: 1;
+}
+
+/* Delete question button */
+
+.results-question-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.editable-question {
+  flex: 1;
+}
+
+.btn-delete-question {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-lg);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  line-height: 1;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.results-question-item:hover .btn-delete-question {
+  opacity: 1;
+}
+
+.btn-delete-question:hover {
+  color: var(--color-error);
+}
+
+/* ==========================================================================
    Unsupported Browser
    ========================================================================== */
 
