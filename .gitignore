@@ -28,6 +28,7 @@
 
 # antfarm
 .antfarm/
+progress-*.txt
 
 # debug
 npm-debug.log*
