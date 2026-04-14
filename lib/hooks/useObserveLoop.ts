@@ -92,28 +92,36 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
 
     const now = Date.now();
     const gapMs = now - lastObserveTimeRef.current;
-    if (gapMs < MIN_OBSERVE_GAP_MS) return;
+    if (gapMs < MIN_OBSERVE_GAP_MS) {
+      if (trigger === 'utterance_end') {
+        console.log(`${t()} ${trigger}: skipped (gap ${gapMs}ms < ${MIN_OBSERVE_GAP_MS}ms)`);
+      }
+      return;
+    }
 
     const transcriptWindow = opts.getTranscriptWindow(120);
     const secondsSilent = Math.floor((now - lastTranscriptGrowthRef.current) / 1000);
+    const secSinceSpoke = lastSpeakTimeRef.current === 0
+      ? 9999
+      : Math.floor((now - lastSpeakTimeRef.current) / 1000);
 
     // Proactive poll guards
     if (trigger === 'proactive') {
       if (secondsSilent < PROACTIVE_SILENCE_THRESHOLD) return;
-      const secSinceSpoke = lastSpeakTimeRef.current === 0
-        ? 9999
-        : Math.floor((now - lastSpeakTimeRef.current) / 1000);
       if (secSinceSpoke < 6) {
         console.log(`${t()} proactive: skipped (spoke ${secSinceSpoke}s ago, need 6s)`);
         return;
       }
-      if (transcriptWindow.length === knownTranscriptLengthRef.current) return;
+      if (transcriptWindow.length === knownTranscriptLengthRef.current) {
+        console.log(`${t()} proactive: skipped (no new transcript)`);
+        return;
+      }
     }
 
     knownTranscriptLengthRef.current = transcriptWindow.length;
     const userAskedDirectly = isUserAskingQuestion(transcriptWindow);
 
-    console.log(`${t()} observe: firing trigger=${trigger} silent=${secondsSilent}s direct=${userAskedDirectly} transcript=${transcriptWindow.length}ch`);
+    console.log(`${t()} observe: firing trigger=${trigger} silent=${secondsSilent}s spoke=${secSinceSpoke}s direct=${userAskedDirectly} transcript=${transcriptWindow.length}ch`);
 
     // Track frame history
     const history = frameHistoryRef.current;
@@ -218,9 +226,10 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
       speechEndTimerRef.current = null;
     }
 
+    const preview = chunkText.trim().slice(0, 60);
     const isQuestion = chunkText.trim().endsWith('?');
     if (isQuestion) {
-      console.log(`${t()} debounce: question detected, ${QUESTION_DEBOUNCE_MS}ms timer`);
+      console.log(`${t()} debounce: question detected "${preview}", ${QUESTION_DEBOUNCE_MS}ms timer`);
       speechEndTimerRef.current = setTimeout(() => {
         fireObserve('utterance_end');
       }, QUESTION_DEBOUNCE_MS);
@@ -243,7 +252,8 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
         return;
       }
     }
-    // Otherwise: narration, no timer. Proactive poll handles it.
+    // Narration: no timer, proactive poll handles it
+    console.log(`${t()} transcript: narration "${preview}" (no trigger)`);
   }, [fireObserve]);
 
   // Background proactive poll for long silences
