@@ -119,9 +119,11 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     const secSinceSpoke = lastSpeakTimeRef.current === 0
       ? 9999
       : Math.floor((now - lastSpeakTimeRef.current) / 1000);
+    const userAskedDirectly = isUserAskingQuestion(transcriptWindow);
 
     // Post-speak cooldown for utterance_end: don't fire right after Claude spoke or was interrupted
-    if (trigger === 'utterance_end' && secSinceSpoke < 6) {
+    // BUT: always let direct user questions (ending with ?) through immediately
+    if (trigger === 'utterance_end' && secSinceSpoke < 6 && !userAskedDirectly) {
       console.log(`${t()} utterance_end: skipped (spoke ${secSinceSpoke}s ago, need 6s)`);
       return;
     }
@@ -142,7 +144,6 @@ export function useObserveLoop(options: UseObserveLoopOptions): UseObserveLoopRe
     }
 
     knownTranscriptLengthRef.current = transcriptWindow.length;
-    const userAskedDirectly = isUserAskingQuestion(transcriptWindow);
 
     console.log(`${t()} observe: firing trigger=${trigger} silent=${secondsSilent}s spoke=${secSinceSpoke}s direct=${userAskedDirectly} transcript=${transcriptWindow.length}ch`);
 
